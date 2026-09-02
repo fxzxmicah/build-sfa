@@ -1,0 +1,53 @@
+From 316dd46cfe28524094e4d1a14058ad324114fcde Mon Sep 17 00:00:00 2001
+From: Fxzx micah <48860358+fxzxmicah@users.noreply.github.com>
+Date: Wed, 2 Sep 2026 03:07:50 +0800
+Subject: [PATCH] platform: decouple command backend from Clash API
+
+---
+ box.go | 10 +++++++---
+ 1 file changed, 7 insertions(+), 3 deletions(-)
+
+diff --git a/box.go b/box.go
+index f06a117..48d7c98 100644
+--- a/box.go
++++ b/box.go
+@@ -153,13 +153,17 @@ func New(options Options) (*Box, error) {
+ 	}
+ 	var needCacheFile bool
+ 	var needClashAPI bool
++	var needPlatformAPI bool
+ 	var needV2RayAPI bool
+ 	if experimentalOptions.CacheFile != nil && experimentalOptions.CacheFile.Enabled || options.PlatformLogWriter != nil {
+ 		needCacheFile = true
+ 	}
+-	if experimentalOptions.ClashAPI != nil || options.PlatformLogWriter != nil {
++	if experimentalOptions.ClashAPI != nil {
+ 		needClashAPI = true
+ 	}
++	if options.PlatformLogWriter != nil {
++		needPlatformAPI = true
++	}
+ 	if experimentalOptions.V2RayAPI != nil && experimentalOptions.V2RayAPI.Listen != "" {
+ 		needV2RayAPI = true
+ 	}
+@@ -177,7 +181,7 @@ func New(options Options) (*Box, error) {
+ 	logFactory, err := log.New(log.Options{
+ 		Context:        ctx,
+ 		Options:        common.PtrValueOrDefault(options.Log),
+-		Observable:     needClashAPI || needAPIService,
++		Observable:     needClashAPI || needPlatformAPI || needAPIService,
+ 		DefaultWriter:  defaultLogWriter,
+ 		BaseTime:       createdAt,
+ 		PlatformWriter: options.PlatformLogWriter,
+@@ -243,7 +247,7 @@ func New(options Options) (*Box, error) {
+ 	if err != nil {
+ 		return nil, E.Cause(err, "initialize router")
+ 	}
+-	if needClashAPI || needAPIService {
++	if needClashAPI || needPlatformAPI || needAPIService {
+ 		trafficManager := trafficcontrol.NewManager(outboundManager)
+ 		service.MustRegisterPtr(ctx, trafficManager)
+ 		router.AppendTracker(trafficManager)
+-- 
+2.54.0
+

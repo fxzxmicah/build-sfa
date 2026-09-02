@@ -1,0 +1,84 @@
+name: Build
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/build.yml
+      - build
+      - config.env
+      - patches/**
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Checkout sing-box
+        run: |
+          source config.env
+          source_dir="$GITHUB_WORKSPACE/sing-box"
+          git init "$source_dir"
+          git -C "$source_dir" remote add origin https://github.com/SagerNet/sing-box.git
+          git -C "$source_dir" fetch --depth=1 origin "refs/tags/$SING_BOX_TAG"
+          git -C "$source_dir" checkout --detach FETCH_HEAD
+          git -C "$source_dir" submodule update --init --depth=1 clients/android
+          git -C "$source_dir/clients/android" fetch --depth=1 origin main
+          git -C "$source_dir/clients/android" checkout --detach FETCH_HEAD
+          git -C "$source_dir/clients/android" submodule update --init --recursive --depth=1
+          echo "SING_BOX_DIR=$source_dir" >> "$GITHUB_ENV"
+          sed -n '0,/^[[:space:]]*ndk-version: /s//NDK_VERSION=/p' \
+            "$source_dir/.github/workflows/build.yml" >> "$GITHUB_ENV"
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: sing-box/go.mod
+          cache-dependency-path: sing-box/go.sum
+
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Setup Android NDK
+        id: ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: ${{ env.NDK_VERSION }}
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Install signing key
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$SING_BOX_DIR/clients/android/app/release.keystore"
+
+      - name: Build
+        env:
+          ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
+          LOCAL_PROPERTIES: ${{ secrets.ANDROID_LOCAL_PROPERTIES }}
+        run: bash build
+
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          source config.env
+          if ! gh release view "$SING_BOX_TAG" >/dev/null 2>&1; then
+            gh release create "$SING_BOX_TAG" \
+              --title "sing-box for Android $SING_BOX_TAG" \
+              --notes "Built from SagerNet/sing-box $SING_BOX_TAG."
+          fi
+          gh release upload "$SING_BOX_TAG" dist/* --clobber

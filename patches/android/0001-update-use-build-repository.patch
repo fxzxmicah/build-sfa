@@ -1,0 +1,38 @@
+From 3a4aee21dee9116f013e3e40aadb8722f8d5386f Mon Sep 17 00:00:00 2001
+From: Fxzx micah <48860358+fxzxmicah@users.noreply.github.com>
+Date: Tue, 1 Sep 2026 21:34:08 +0800
+Subject: [PATCH] update: use build repository
+
+---
+ app/build.gradle.kts                                            | 1 +
+ .../java/io/nekohasekai/sfa/vendor/GitHubUpdateChecker.kt       | 2 +-
+ 2 files changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/app/build.gradle.kts b/app/build.gradle.kts
+index 85b7869..cbebfa1 100644
+--- a/app/build.gradle.kts
++++ b/app/build.gradle.kts
+@@ -74,6 +74,7 @@ android {
+         versionCode = getVersionProps("VERSION_CODE").toInt()
+         versionName = getVersionProps("VERSION_NAME")
+         base.archivesName.set("SFA-${versionName}")
++        buildConfigField("String", "UPDATE_REPOSITORY", "\"${System.getenv("SFA_UPDATE_REPOSITORY")}\"")
+     }
+ 
+     signingConfigs {
+diff --git a/app/src/github/java/io/nekohasekai/sfa/vendor/GitHubUpdateChecker.kt b/app/src/github/java/io/nekohasekai/sfa/vendor/GitHubUpdateChecker.kt
+index ab0c1c2..e496b9f 100644
+--- a/app/src/github/java/io/nekohasekai/sfa/vendor/GitHubUpdateChecker.kt
++++ b/app/src/github/java/io/nekohasekai/sfa/vendor/GitHubUpdateChecker.kt
+@@ -14,7 +14,7 @@ import java.io.Closeable
+ 
+ class GitHubUpdateChecker : Closeable {
+     companion object {
+-        private const val RELEASES_URL = "https://api.github.com/repos/SagerNet/sing-box/releases"
++        private val RELEASES_URL = "https://api.github.com/repos/${BuildConfig.UPDATE_REPOSITORY}/releases"
+         private const val METADATA_FILENAME = "SFA-version-metadata.json"
+     }
+ 
+-- 
+2.54.0
+

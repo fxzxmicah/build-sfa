@@ -1,0 +1,83 @@
+From 255d9c845166333d664046dbc6df75117d8d21ea Mon Sep 17 00:00:00 2001
+From: Fxzx micah <48860358+fxzxmicah@users.noreply.github.com>
+Date: Tue, 1 Sep 2026 22:35:12 +0800
+Subject: [PATCH] stack: use wildcard TCP listeners on Android
+
+---
+ stack_system.go                 |  6 ++++--
+ stack_system_address_android.go | 13 +++++++++++++
+ stack_system_address_other.go   | 16 ++++++++++++++++
+ 3 files changed, 33 insertions(+), 2 deletions(-)
+ create mode 100644 stack_system_address_android.go
+ create mode 100644 stack_system_address_other.go
+
+diff --git a/stack_system.go b/stack_system.go
+index 8555b9f..fc27f51 100644
+--- a/stack_system.go
++++ b/stack_system.go
+@@ -162,8 +162,9 @@ func (s *System) start() error {
+ 	var tcpListener net.Listener
+ 	var err error
+ 	if s.inet4NextAddress.IsValid() {
++		network, address := tcp4ListenAddress(s.inet4Address)
+ 		for range 3 {
+-			tcpListener, err = listenNetworkNamespace(s.ctx, s.netNs, listener, "tcp4", net.JoinHostPort(s.inet4Address.String(), "0"))
++			tcpListener, err = listenNetworkNamespace(s.ctx, s.netNs, listener, network, address)
+ 			if !retryableListenError(err) {
+ 				break
+ 			}
+@@ -178,8 +179,9 @@ func (s *System) start() error {
+ 		go s.acceptLoop(tcpListener, s.tcpNat4)
+ 	}
+ 	if s.inet6NextAddress.IsValid() {
++		network, address := tcp6ListenAddress(s.inet6Address)
+ 		for range 3 {
+-			tcpListener, err = listenNetworkNamespace(s.ctx, s.netNs, listener, "tcp6", net.JoinHostPort(s.inet6Address.String(), "0"))
++			tcpListener, err = listenNetworkNamespace(s.ctx, s.netNs, listener, network, address)
+ 			if !retryableListenError(err) {
+ 				break
+ 			}
+diff --git a/stack_system_address_android.go b/stack_system_address_android.go
+new file mode 100644
+index 0000000..8621d60
+--- /dev/null
++++ b/stack_system_address_android.go
+@@ -0,0 +1,13 @@
++//go:build android
++
++package tun
++
++import "net/netip"
++
++func tcp4ListenAddress(netip.Addr) (string, string) {
++	return "tcp", "[::]:0"
++}
++
++func tcp6ListenAddress(netip.Addr) (string, string) {
++	return "tcp", "[::]:0"
++}
+diff --git a/stack_system_address_other.go b/stack_system_address_other.go
+new file mode 100644
+index 0000000..5049f1c
+--- /dev/null
++++ b/stack_system_address_other.go
+@@ -0,0 +1,16 @@
++//go:build !android
++
++package tun
++
++import (
++	"net"
++	"net/netip"
++)
++
++func tcp4ListenAddress(address netip.Addr) (string, string) {
++	return "tcp4", net.JoinHostPort(address.String(), "0")
++}
++
++func tcp6ListenAddress(address netip.Addr) (string, string) {
++	return "tcp6", net.JoinHostPort(address.String(), "0")
++}
+-- 
+2.54.0
+
