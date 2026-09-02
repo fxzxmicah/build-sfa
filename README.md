@@ -40,10 +40,11 @@ The build intentionally excludes the optional NaiveProxy, WireGuard, Clash
 API, Tailscale, OpenVPN, OpenConnect, DHCP, ACME, Cloudflared, and USB/IP
 subsystems. Standard gRPC is also excluded: sing-box automatically uses its
 built-in gRPC-lite transport when `with_grpc` is absent. Protocols registered
-without optional build tags remain available. Adding `with_tailscale`,
-`with_openvpn`, `with_openconnect`, or `with_usbip` to `LIBBOX_TAGS` also
-selects that feature's Android source set; absent features and their UI are not
-compiled. Ghostty dependencies are likewise limited to Tailscale builds.
+without optional build tags remain available. Adding `with_clash_api`,
+`with_tailscale`, `with_openvpn`, `with_openconnect`, or `with_usbip` to
+`LIBBOX_TAGS` also selects that feature's Android source set; absent features
+and their UI are not compiled. Ghostty dependencies are likewise limited to
+Tailscale builds.
 
 The SFA build uses the `otherRelease` variant: `other` selects the GitHub
 distribution rather than Google Play or legacy Android, while `release`

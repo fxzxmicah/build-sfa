@@ -1,12 +1,13 @@
-From b5dec140d7e603d656ef2d056a8c67eeb5900577 Mon Sep 17 00:00:00 2001
+From 518f5e0adc9684844876885c5dcf272f98748f92 Mon Sep 17 00:00:00 2001
 From: Fxzx micah <48860358+fxzxmicah@users.noreply.github.com>
 Date: Wed, 2 Sep 2026 03:07:50 +0800
 Subject: [PATCH] build: align Android features with libbox tags
 
 ---
- app/build.gradle.kts                          |  29 +-
+ app/build.gradle.kts                          |  31 +-
  .../sfa/vendor/GitHubUpdateChecker.kt         |  15 +-
  .../io/nekohasekai/sfa/vendor/UpdateWorker.kt |  11 +-
+ .../screen/dashboard/ClashModeFeature.kt}     |  25 +-
  .../sfa/compose/feature/OpenConnectFeature.kt |  43 ++
  .../screen/tools/OpenConnectBrowserDialog.kt  |   0
  .../screen/tools/OpenConnectEndpointScreen.kt |   0
@@ -50,6 +51,7 @@ Subject: [PATCH] build: align Android features with libbox tags
  .../nekohasekai/sfa/usbip/UsbDeviceBridge.kt  |   0
  .../io/nekohasekai/sfa/usbip/UsbInfo.kt       |   0
  .../usbip}/io/nekohasekai/sfa/usbip/UsbUrb.kt |   0
+ .../screen/dashboard/ClashModeFeature.kt      |  20 +
  .../sfa/compose/feature/OpenConnectFeature.kt |   6 +
  .../sfa/compose/feature/OpenVPNFeature.kt     |   6 +
  .../sfa/compose/feature/TailscaleFeature.kt   |   8 +
@@ -59,6 +61,9 @@ Subject: [PATCH] build: align Android features with libbox tags
  .../nekohasekai/sfa/compose/MainActivity.kt   |  64 +--
  .../sfa/compose/feature/AppFeature.kt         |  81 +++
  .../sfa/compose/navigation/Navigation.kt      | 254 +---------
+ .../screen/dashboard/DashboardCardRenderer.kt |   9 +-
+ .../dashboard/DashboardSettingsBottomSheet.kt |  29 +-
+ .../screen/dashboard/DashboardViewModel.kt    |  71 ++-
  .../screen/settings/AppSettingsScreen.kt      | 326 +-----------
  .../screen/settings/FDroidMirrorScreen.kt     | 462 ------------------
  .../sfa/compose/screen/tools/ToolsScreen.kt   | 293 +----------
@@ -70,7 +75,8 @@ Subject: [PATCH] build: align Android features with libbox tags
  .../nekohasekai/sfa/vendor/VendorInterface.kt |   3 -
  .../java/io/nekohasekai/sfa/vendor/Vendor.kt  |  33 +-
  .../java/io/nekohasekai/sfa/vendor/Vendor.kt  |   9 +-
- 66 files changed, 496 insertions(+), 1524 deletions(-)
+ 71 files changed, 578 insertions(+), 1598 deletions(-)
+ rename app/src/{main/java/io/nekohasekai/sfa/compose/screen/dashboard/ClashModeCard.kt => libbox/with/clashapi/io/nekohasekai/sfa/compose/screen/dashboard/ClashModeFeature.kt} (88%)
  create mode 100644 app/src/libbox/with/openconnect/io/nekohasekai/sfa/compose/feature/OpenConnectFeature.kt
  rename app/src/{main/java => libbox/with/openconnect}/io/nekohasekai/sfa/compose/screen/tools/OpenConnectBrowserDialog.kt (100%)
  rename app/src/{main/java => libbox/with/openconnect}/io/nekohasekai/sfa/compose/screen/tools/OpenConnectEndpointScreen.kt (100%)
@@ -114,6 +120,7 @@ Subject: [PATCH] build: align Android features with libbox tags
  rename app/src/{main/java => libbox/with/usbip}/io/nekohasekai/sfa/usbip/UsbDeviceBridge.kt (100%)
  rename app/src/{main/java => libbox/with/usbip}/io/nekohasekai/sfa/usbip/UsbInfo.kt (100%)
  rename app/src/{main/java => libbox/with/usbip}/io/nekohasekai/sfa/usbip/UsbUrb.kt (100%)
+ create mode 100644 app/src/libbox/without/clashapi/io/nekohasekai/sfa/compose/screen/dashboard/ClashModeFeature.kt
  create mode 100644 app/src/libbox/without/openconnect/io/nekohasekai/sfa/compose/feature/OpenConnectFeature.kt
  create mode 100644 app/src/libbox/without/openvpn/io/nekohasekai/sfa/compose/feature/OpenVPNFeature.kt
  create mode 100644 app/src/libbox/without/tailscale/io/nekohasekai/sfa/compose/feature/TailscaleFeature.kt
@@ -125,7 +132,7 @@ Subject: [PATCH] build: align Android features with libbox tags
  delete mode 100644 app/src/main/java/io/nekohasekai/sfa/update/UpdateTrack.kt
 
 diff --git a/app/build.gradle.kts b/app/build.gradle.kts
-index cbebfa1..d90e886 100644
+index cbebfa1..e9f9f8f 100644
 --- a/app/build.gradle.kts
 +++ b/app/build.gradle.kts
 @@ -18,6 +18,8 @@ plugins {
@@ -146,7 +153,15 @@ index cbebfa1..d90e886 100644
      }
  
      signingConfigs {
-@@ -114,6 +118,16 @@ android {
+@@ -94,6 +98,7 @@ android {
+         }
+         release {
+             isMinifyEnabled = true
++            isShrinkResources = true
+             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+             signingConfig = signingConfigs.getByName("release")
+             vcsInfo.include = false
+@@ -114,6 +119,17 @@ android {
      }
  
      sourceSets {
@@ -156,6 +171,7 @@ index cbebfa1..d90e886 100644
 +                "openvpn" to "with_openvpn",
 +                "openconnect" to "with_openconnect",
 +                "usbip" to "with_usbip",
++                "clashapi" to "with_clash_api",
 +            ).forEach { (feature, tag) ->
 +                java.directories.add("src/libbox/${if (tag in libboxTags) "with" else "without"}/$feature")
 +            }
@@ -163,7 +179,7 @@ index cbebfa1..d90e886 100644
          getByName("play") {
              java.directories.add("src/minApi24/java")
              aidl.directories.add("src/minApi24/aidl")
-@@ -355,13 +369,14 @@ dependencies {
+@@ -355,13 +371,14 @@ dependencies {
      implementation("com.github.jeziellago:compose-markdown:0.7.2")
      implementation("org.kodein.emoji:emoji-kt:2.5.0")
  
@@ -259,6 +275,61 @@ index 059458d..d4a5ba5 100644
  
              if (updateInfo == null) {
                  Log.d(TAG, "No update available")
+diff --git a/app/src/main/java/io/nekohasekai/sfa/compose/screen/dashboard/ClashModeCard.kt b/app/src/libbox/with/clashapi/io/nekohasekai/sfa/compose/screen/dashboard/ClashModeFeature.kt
+similarity index 88%
+rename from app/src/main/java/io/nekohasekai/sfa/compose/screen/dashboard/ClashModeCard.kt
+rename to app/src/libbox/with/clashapi/io/nekohasekai/sfa/compose/screen/dashboard/ClashModeFeature.kt
+index 80d0072..df798bb 100644
+--- a/app/src/main/java/io/nekohasekai/sfa/compose/screen/dashboard/ClashModeCard.kt
++++ b/app/src/libbox/with/clashapi/io/nekohasekai/sfa/compose/screen/dashboard/ClashModeFeature.kt
+@@ -15,6 +15,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
+ import androidx.compose.material.icons.Icons
+ import androidx.compose.material.icons.filled.Check
+ import androidx.compose.material.icons.filled.UnfoldMore
++import androidx.compose.material.icons.outlined.Route
+ import androidx.compose.material.icons.outlined.Tune
+ import androidx.compose.material3.Card
+ import androidx.compose.material3.DropdownMenu
+@@ -34,16 +35,38 @@ import androidx.compose.runtime.remember
+ import androidx.compose.runtime.setValue
+ import androidx.compose.ui.Alignment
+ import androidx.compose.ui.Modifier
++import androidx.compose.ui.graphics.vector.ImageVector
+ import androidx.compose.ui.platform.LocalDensity
+ import androidx.compose.ui.res.stringResource
+ import androidx.compose.ui.text.font.FontWeight
+ import androidx.compose.ui.text.rememberTextMeasurer
+ import androidx.compose.ui.unit.dp
+ import io.nekohasekai.sfa.R
++import io.nekohasekai.sfa.utils.CommandClient
++
++object ClashModeFeature {
++    val cardGroup: CardGroup? = CardGroup.ClashMode
++    val connectionType: CommandClient.ConnectionType? = CommandClient.ConnectionType.ClashMode
++    val icon: ImageVector = Icons.Outlined.Route
++
++    @Composable
++    fun title(): String = stringResource(R.string.clash_mode)
++
++    @Composable
++    fun Card(uiState: DashboardUiState, onModeSelected: (String) -> Unit, modifier: Modifier = Modifier) {
++        if (!uiState.clashModeVisible) return
++        ClashModeCard(uiState.clashModes, uiState.selectedClashMode, onModeSelected, modifier)
++    }
++}
+ 
+ @OptIn(ExperimentalMaterial3Api::class)
+ @Composable
+-fun ClashModeCard(modes: List<String>, selectedMode: String, onModeSelected: (String) -> Unit, modifier: Modifier = Modifier) {
++private fun ClashModeCard(
++    modes: List<String>,
++    selectedMode: String,
++    onModeSelected: (String) -> Unit,
++    modifier: Modifier = Modifier,
++) {
+     Card(
+         modifier = modifier.fillMaxWidth(),
+     ) {
 diff --git a/app/src/libbox/with/openconnect/io/nekohasekai/sfa/compose/feature/OpenConnectFeature.kt b/app/src/libbox/with/openconnect/io/nekohasekai/sfa/compose/feature/OpenConnectFeature.kt
 new file mode 100644
 index 0000000..714b670
@@ -777,6 +848,32 @@ diff --git a/app/src/main/java/io/nekohasekai/sfa/usbip/UsbUrb.kt b/app/src/libb
 similarity index 100%
 rename from app/src/main/java/io/nekohasekai/sfa/usbip/UsbUrb.kt
 rename to app/src/libbox/with/usbip/io/nekohasekai/sfa/usbip/UsbUrb.kt
+diff --git a/app/src/libbox/without/clashapi/io/nekohasekai/sfa/compose/screen/dashboard/ClashModeFeature.kt b/app/src/libbox/without/clashapi/io/nekohasekai/sfa/compose/screen/dashboard/ClashModeFeature.kt
+new file mode 100644
+index 0000000..27a938b
+--- /dev/null
++++ b/app/src/libbox/without/clashapi/io/nekohasekai/sfa/compose/screen/dashboard/ClashModeFeature.kt
+@@ -0,0 +1,20 @@
++package io.nekohasekai.sfa.compose.screen.dashboard
++
++import androidx.compose.material.icons.Icons
++import androidx.compose.material.icons.outlined.Route
++import androidx.compose.runtime.Composable
++import androidx.compose.ui.Modifier
++import androidx.compose.ui.graphics.vector.ImageVector
++import io.nekohasekai.sfa.utils.CommandClient
++
++object ClashModeFeature {
++    val cardGroup: CardGroup? = null
++    val connectionType: CommandClient.ConnectionType? = null
++    val icon: ImageVector = Icons.Outlined.Route
++
++    @Composable
++    fun title(): String = ""
++
++    @Composable
++    fun Card(uiState: DashboardUiState, onModeSelected: (String) -> Unit, modifier: Modifier = Modifier) {}
++}
 diff --git a/app/src/libbox/without/openconnect/io/nekohasekai/sfa/compose/feature/OpenConnectFeature.kt b/app/src/libbox/without/openconnect/io/nekohasekai/sfa/compose/feature/OpenConnectFeature.kt
 new file mode 100644
 index 0000000..b03baec
@@ -1447,6 +1544,227 @@ index 8ab1513..26a5419 100644
 +        features.forEach { it.routes(this, navController) }
      }
  }
+diff --git a/app/src/main/java/io/nekohasekai/sfa/compose/screen/dashboard/DashboardCardRenderer.kt b/app/src/main/java/io/nekohasekai/sfa/compose/screen/dashboard/DashboardCardRenderer.kt
+index 5c57f20..42fb3ba 100644
+--- a/app/src/main/java/io/nekohasekai/sfa/compose/screen/dashboard/DashboardCardRenderer.kt
++++ b/app/src/main/java/io/nekohasekai/sfa/compose/screen/dashboard/DashboardCardRenderer.kt
+@@ -40,14 +40,7 @@ fun DashboardCardRenderer(
+ ) {
+     when (cardGroup) {
+         CardGroup.ClashMode -> {
+-            if (uiState.clashModeVisible) {
+-                ClashModeCard(
+-                    modes = uiState.clashModes,
+-                    selectedMode = uiState.selectedClashMode,
+-                    onModeSelected = onClashModeSelected,
+-                    modifier = modifier,
+-                )
+-            }
++            ClashModeFeature.Card(uiState, onClashModeSelected, modifier)
+         }
+ 
+         CardGroup.UploadTraffic -> {
+diff --git a/app/src/main/java/io/nekohasekai/sfa/compose/screen/dashboard/DashboardSettingsBottomSheet.kt b/app/src/main/java/io/nekohasekai/sfa/compose/screen/dashboard/DashboardSettingsBottomSheet.kt
+index 12ec111..90d7678 100644
+--- a/app/src/main/java/io/nekohasekai/sfa/compose/screen/dashboard/DashboardSettingsBottomSheet.kt
++++ b/app/src/main/java/io/nekohasekai/sfa/compose/screen/dashboard/DashboardSettingsBottomSheet.kt
+@@ -31,7 +31,6 @@ import androidx.compose.material.icons.outlined.BugReport
+ import androidx.compose.material.icons.outlined.Cable
+ import androidx.compose.material.icons.outlined.Download
+ import androidx.compose.material.icons.outlined.Person
+-import androidx.compose.material.icons.outlined.Route
+ import androidx.compose.material.icons.outlined.SettingsEthernet
+ import androidx.compose.material.icons.outlined.Upload
+ import androidx.compose.material3.Card
+@@ -156,28 +155,8 @@ fun DashboardSettingsBottomSheet(
+                 )
+                 TextButton(
+                     onClick = {
+-                        val defaultOrder =
+-                            listOfNotNull(
+-                                CardGroup.UploadTraffic,
+-                                CardGroup.DownloadTraffic,
+-                                CardGroup.Debug,
+-                                CardGroup.Connections,
+-                                CardGroup.SystemProxy,
+-                                CardGroup.ClashMode,
+-                                CardGroup.Profiles,
+-                            )
+-                        val allCardsEnabled =
+-                            setOfNotNull(
+-                                CardGroup.ClashMode,
+-                                CardGroup.UploadTraffic,
+-                                CardGroup.DownloadTraffic,
+-                                CardGroup.Debug,
+-                                CardGroup.Connections,
+-                                CardGroup.SystemProxy,
+-                                CardGroup.Profiles,
+-                            )
+-                        reorderedList = defaultOrder
+-                        currentVisibleCards = allCardsEnabled
++                        reorderedList = defaultCardOrder
++                        currentVisibleCards = availableCardGroups
+                         onResetOrder()
+                         hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
+                     },
+@@ -385,7 +364,7 @@ fun DashboardItemCard(
+                     CardGroup.Connections -> Icons.Outlined.Cable
+                     CardGroup.UploadTraffic -> Icons.Outlined.Upload
+                     CardGroup.DownloadTraffic -> Icons.Outlined.Download
+-                    CardGroup.ClashMode -> Icons.Outlined.Route
++                    CardGroup.ClashMode -> ClashModeFeature.icon
+                     CardGroup.SystemProxy -> Icons.Outlined.SettingsEthernet
+                     CardGroup.Profiles -> Icons.Outlined.Person
+                 },
+@@ -416,7 +395,7 @@ fun DashboardItemCard(
+                         CardGroup.Connections -> stringResource(R.string.title_connections)
+                         CardGroup.UploadTraffic -> stringResource(R.string.upload)
+                         CardGroup.DownloadTraffic -> stringResource(R.string.download)
+-                        CardGroup.ClashMode -> stringResource(R.string.clash_mode)
++                        CardGroup.ClashMode -> ClashModeFeature.title()
+                         CardGroup.SystemProxy -> stringResource(R.string.system_proxy)
+                         CardGroup.Profiles -> stringResource(R.string.title_configuration)
+                     },
+diff --git a/app/src/main/java/io/nekohasekai/sfa/compose/screen/dashboard/DashboardViewModel.kt b/app/src/main/java/io/nekohasekai/sfa/compose/screen/dashboard/DashboardViewModel.kt
+index fd14366..1da3c24 100644
+--- a/app/src/main/java/io/nekohasekai/sfa/compose/screen/dashboard/DashboardViewModel.kt
++++ b/app/src/main/java/io/nekohasekai/sfa/compose/screen/dashboard/DashboardViewModel.kt
+@@ -47,6 +47,26 @@ enum class CardWidth {
+     Full,
+ }
+ 
++val availableCardGroups = setOfNotNull(
++    ClashModeFeature.cardGroup,
++    CardGroup.UploadTraffic,
++    CardGroup.DownloadTraffic,
++    CardGroup.Debug,
++    CardGroup.Connections,
++    CardGroup.SystemProxy,
++    CardGroup.Profiles,
++)
++
++val defaultCardOrder = listOfNotNull(
++    CardGroup.UploadTraffic,
++    CardGroup.DownloadTraffic,
++    CardGroup.Debug,
++    CardGroup.Connections,
++    CardGroup.SystemProxy,
++    ClashModeFeature.cardGroup,
++    CardGroup.Profiles,
++)
++
+ data class DashboardUiState(
+     val serviceStatus: Status = Status.Stopped,
+     val profiles: List<Profile> = emptyList(),
+@@ -86,26 +106,8 @@ data class DashboardUiState(
+     val systemProxyEnabled: Boolean = false,
+     val systemProxySwitching: Boolean = false,
+     // Card visibility settings
+-    val visibleCards: Set<CardGroup> =
+-        setOf(
+-            CardGroup.ClashMode,
+-            CardGroup.UploadTraffic,
+-            CardGroup.DownloadTraffic,
+-            CardGroup.Debug,
+-            CardGroup.Connections,
+-            CardGroup.SystemProxy,
+-            CardGroup.Profiles,
+-        ),
+-    val cardOrder: List<CardGroup> =
+-        listOf(
+-            CardGroup.UploadTraffic,
+-            CardGroup.DownloadTraffic,
+-            CardGroup.Debug,
+-            CardGroup.Connections,
+-            CardGroup.SystemProxy,
+-            CardGroup.ClashMode,
+-            CardGroup.Profiles,
+-        ),
++    val visibleCards: Set<CardGroup> = availableCardGroups,
++    val cardOrder: List<CardGroup> = defaultCardOrder,
+     val cardWidths: Map<CardGroup, CardWidth> =
+         mapOf(
+             CardGroup.ClashMode to CardWidth.Full,
+@@ -133,9 +135,9 @@ class DashboardViewModel :
+     internal val commandClient =
+         CommandClient(
+             viewModelScope,
+-            listOf(
++            listOfNotNull(
+                 CommandClient.ConnectionType.Status,
+-                CommandClient.ConnectionType.ClashMode,
++                ClashModeFeature.connectionType,
+                 CommandClient.ConnectionType.Groups,
+             ),
+             this,
+@@ -146,8 +148,7 @@ class DashboardViewModel :
+         val disabledItems = loadDisabledItems()
+ 
+         // Calculate visible items (all items minus disabled)
+-        val allItems = CardGroup.values().toSet()
+-        val visibleCards = allItems - disabledItems
++        val visibleCards = availableCardGroups - disabledItems
+ 
+         return DashboardUiState(
+             cardOrder = savedOrder,
+@@ -718,21 +719,13 @@ class DashboardViewModel :
+         updateState {
+             copy(
+                 cardOrder = getDefaultItemOrder(),
+-                visibleCards = CardGroup.values().toSet(),
++                visibleCards = availableCardGroups,
+             )
+         }
+     }
+ 
+     // Helper functions for serialization
+-    private fun getDefaultItemOrder() = listOf(
+-        CardGroup.UploadTraffic,
+-        CardGroup.DownloadTraffic,
+-        CardGroup.Debug,
+-        CardGroup.Connections,
+-        CardGroup.SystemProxy,
+-        CardGroup.ClashMode,
+-        CardGroup.Profiles,
+-    )
++    private fun getDefaultItemOrder() = defaultCardOrder
+ 
+     private fun loadItemOrder(): List<CardGroup> {
+         val savedOrder = Settings.dashboardItemOrder
+@@ -746,13 +739,12 @@ class DashboardViewModel :
+ 
+             for (i in 0 until jsonArray.length()) {
+                 val itemName = jsonArray.getString(i)
+-                stringToCardGroup(itemName)?.let { order.add(it) }
++                stringToCardGroup(itemName)?.takeIf(availableCardGroups::contains)?.let(order::add)
+             }
+ 
+             // Add any new items that aren't in the saved order
+-            val allItems = CardGroup.values().toSet()
+             val savedItems = order.toSet()
+-            val newItems = allItems - savedItems
++            val newItems = availableCardGroups - savedItems
+ 
+             order.addAll(newItems)
+             order
+@@ -773,15 +765,14 @@ class DashboardViewModel :
+         val savedDisabled = Settings.dashboardDisabledItems
+         // Filter out Profiles from disabled items (it cannot be disabled)
+         return savedDisabled.mapNotNull { stringToCardGroup(it) }
+-            .filter { it != CardGroup.Profiles }
++            .filter { it in availableCardGroups && it != CardGroup.Profiles }
+             .toSet()
+     }
+ 
+     private fun saveDisabledItems(visibleCards: Set<CardGroup>) {
+-        val allItems = CardGroup.values().toSet()
+         // Always ensure Profiles is in visibleCards (cannot be disabled)
+         val actualVisibleCards = visibleCards + CardGroup.Profiles
+-        val disabledItems = allItems - actualVisibleCards
++        val disabledItems = availableCardGroups - actualVisibleCards
+         Settings.dashboardDisabledItems = disabledItems.map { cardGroupToString(it) }.toSet()
+     }
+ 
 diff --git a/app/src/main/java/io/nekohasekai/sfa/compose/screen/settings/AppSettingsScreen.kt b/app/src/main/java/io/nekohasekai/sfa/compose/screen/settings/AppSettingsScreen.kt
 index a5424ab..f50ac84 100644
 --- a/app/src/main/java/io/nekohasekai/sfa/compose/screen/settings/AppSettingsScreen.kt
