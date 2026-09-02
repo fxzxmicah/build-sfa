@@ -39,6 +39,8 @@ fi
 apply_patches() {
   local source=$1 patch_dir=$2 patch
 
+  [[ -d $patch_dir ]] || return 0
+
   while IFS= read -r -d '' patch; do
     git -C "$source" apply "$patch"
   done < <(find "$patch_dir" -type f -name '*.patch' -print0 | sort -z)
@@ -47,7 +49,7 @@ apply_patches() {
 patch_modules() {
   local patch_dir module module_dir
 
-  [[ -d $root/patches/modules ]] || return
+  [[ -d $root/patches/modules ]] || return 0
   while IFS= read -r -d '' patch_dir; do
     module=${patch_dir#"$root/patches/modules/"}
     module_dir=$(mktemp -d "${RUNNER_TEMP:-$work_dir}/${module##*/}.XXXXXX")
