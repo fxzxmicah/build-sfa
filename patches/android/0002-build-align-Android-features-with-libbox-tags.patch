@@ -1,7 +1,7 @@
-From 518f5e0adc9684844876885c5dcf272f98748f92 Mon Sep 17 00:00:00 2001
+From c2ce09efb338a406b08d361384f17e4ba7326770 Mon Sep 17 00:00:00 2001
 From: Fxzx micah <48860358+fxzxmicah@users.noreply.github.com>
 Date: Wed, 2 Sep 2026 03:07:50 +0800
-Subject: [PATCH] build: align Android features with libbox tags
+Subject: [PATCH 2/2] build: align Android features with libbox tags
 
 ---
  app/build.gradle.kts                          |  31 +-

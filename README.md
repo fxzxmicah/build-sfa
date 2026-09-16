@@ -55,15 +55,10 @@ build; source and release-channel selectors are removed.
 
 Every successful GitHub Actions build publishes the generated files directly
 to the Release named by `SING_BOX_TAG`. Rebuilding the same version replaces
-its assets instead of creating another Release. The build reads both metadata
-values from the selected Android client and generates this file automatically:
-
-```json
-{
-  "version_code": 730,
-  "version_name": "1.14.0"
-}
-```
+its assets instead of creating another Release. The build reads `VERSION_CODE`
+and `VERSION_NAME` from the selected Android client and generates
+`SFA-version-metadata.json` automatically; no version metadata is maintained
+in this repository.
 
 The platform command backend does not require `with_clash_api`: SFA still gets
 logs, status, connection statistics, and outbound groups without exposing a
@@ -121,8 +116,9 @@ module therefore requires no build-script change.
 The sing-tun patch changes the system stack's Android TCP forwarders to listen
 on the dual-stack wildcard address. This avoids binding them to a TUN address
 shared by separate per-user VPN instances; UDP is unaffected because the mixed
-stack handles it through gVisor instead of these listeners. Other platforms
-retain sing-tun's address-specific listeners.
+stack handles it through gVisor instead of these listeners. It also closes
+accepted TCP connections whose NAT session has already disappeared. Other
+platforms retain sing-tun's address-specific listeners.
 
 If an upstream update makes a patch inapplicable, source preparation fails
 instead of silently building without it.

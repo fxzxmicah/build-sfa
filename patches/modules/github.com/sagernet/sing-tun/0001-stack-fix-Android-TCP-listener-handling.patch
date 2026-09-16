@@ -1,18 +1,18 @@
-From 255d9c845166333d664046dbc6df75117d8d21ea Mon Sep 17 00:00:00 2001
+From 5a4408599d7193cbfb7ea5d137cc1a503180a129 Mon Sep 17 00:00:00 2001
 From: Fxzx micah <48860358+fxzxmicah@users.noreply.github.com>
-Date: Tue, 1 Sep 2026 22:35:12 +0800
-Subject: [PATCH] stack: use wildcard TCP listeners on Android
+Date: Sat, 12 Sep 2026 00:49:34 +0800
+Subject: [PATCH] stack: fix Android TCP listener handling
 
 ---
- stack_system.go                 |  6 ++++--
+ stack_system.go                 |  7 +++++--
  stack_system_address_android.go | 13 +++++++++++++
  stack_system_address_other.go   | 16 ++++++++++++++++
- 3 files changed, 33 insertions(+), 2 deletions(-)
+ 3 files changed, 34 insertions(+), 2 deletions(-)
  create mode 100644 stack_system_address_android.go
  create mode 100644 stack_system_address_other.go
 
 diff --git a/stack_system.go b/stack_system.go
-index 8555b9f..fc27f51 100644
+index 8555b9f..5de84f4 100644
 --- a/stack_system.go
 +++ b/stack_system.go
 @@ -162,8 +162,9 @@ func (s *System) start() error {
@@ -37,6 +37,14 @@ index 8555b9f..fc27f51 100644
  			if !retryableListenError(err) {
  				break
  			}
+@@ -382,6 +384,7 @@ func (s *System) acceptLoop(listener net.Listener, tcpNat *TCPNat) {
+ 		session := tcpNat.LookupBack(connPort)
+ 		if session == nil {
+ 			s.logger.Trace(E.New("unknown session with port ", connPort))
++			conn.Close()
+ 			continue
+ 		}
+ 		go s.handler.NewConnectionEx(s.ctx, conn, M.SocksaddrFromNetIP(session.Source), M.SocksaddrFromNetIP(session.Destination), nil)
 diff --git a/stack_system_address_android.go b/stack_system_address_android.go
 new file mode 100644
 index 0000000..8621d60

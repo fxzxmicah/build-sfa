@@ -1,7 +1,7 @@
-From 3a4aee21dee9116f013e3e40aadb8722f8d5386f Mon Sep 17 00:00:00 2001
+From 99917b7de647ca3773ea8c0f526ab012ce4152f7 Mon Sep 17 00:00:00 2001
 From: Fxzx micah <48860358+fxzxmicah@users.noreply.github.com>
 Date: Tue, 1 Sep 2026 21:34:08 +0800
-Subject: [PATCH] update: use build repository
+Subject: [PATCH 1/2] update: use build repository
 
 ---
  app/build.gradle.kts                                            | 1 +
