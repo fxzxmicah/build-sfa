@@ -1,4 +1,4 @@
-From 5a4408599d7193cbfb7ea5d137cc1a503180a129 Mon Sep 17 00:00:00 2001
+From 9cc63de3bae10ea38fc41d87ecd6b01c168d124e Mon Sep 17 00:00:00 2001
 From: Fxzx micah <48860358+fxzxmicah@users.noreply.github.com>
 Date: Sat, 12 Sep 2026 00:49:34 +0800
 Subject: [PATCH] stack: fix Android TCP listener handling
@@ -12,10 +12,10 @@ Subject: [PATCH] stack: fix Android TCP listener handling
  create mode 100644 stack_system_address_other.go
 
 diff --git a/stack_system.go b/stack_system.go
-index 8555b9f..5de84f4 100644
+index 46fadb0..eff578b 100644
 --- a/stack_system.go
 +++ b/stack_system.go
-@@ -162,8 +162,9 @@ func (s *System) start() error {
+@@ -156,8 +156,9 @@ func (s *System) start() error {
  	var tcpListener net.Listener
  	var err error
  	if s.inet4NextAddress.IsValid() {
@@ -26,7 +26,7 @@ index 8555b9f..5de84f4 100644
  			if !retryableListenError(err) {
  				break
  			}
-@@ -178,8 +179,9 @@ func (s *System) start() error {
+@@ -172,8 +173,9 @@ func (s *System) start() error {
  		go s.acceptLoop(tcpListener, s.tcpNat4)
  	}
  	if s.inet6NextAddress.IsValid() {
@@ -37,7 +37,7 @@ index 8555b9f..5de84f4 100644
  			if !retryableListenError(err) {
  				break
  			}
-@@ -382,6 +384,7 @@ func (s *System) acceptLoop(listener net.Listener, tcpNat *TCPNat) {
+@@ -397,6 +399,7 @@ func (s *System) acceptLoop(listener net.Listener, tcpNat *TCPNat) {
  		session := tcpNat.LookupBack(connPort)
  		if session == nil {
  			s.logger.Trace(E.New("unknown session with port ", connPort))

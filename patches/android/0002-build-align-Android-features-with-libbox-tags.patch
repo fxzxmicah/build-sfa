@@ -1,4 +1,4 @@
-From c2ce09efb338a406b08d361384f17e4ba7326770 Mon Sep 17 00:00:00 2001
+From fd8c22a685ce325899467f5376166d407fe234a8 Mon Sep 17 00:00:00 2001
 From: Fxzx micah <48860358+fxzxmicah@users.noreply.github.com>
 Date: Wed, 2 Sep 2026 03:07:50 +0800
 Subject: [PATCH 2/2] build: align Android features with libbox tags
@@ -967,7 +967,7 @@ index 08295b0..15534a8 100644
                  android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                  android:value="taildrop" />
 diff --git a/app/src/main/java/io/nekohasekai/sfa/Application.kt b/app/src/main/java/io/nekohasekai/sfa/Application.kt
-index 84228c5..de35793 100644
+index 5255583..114abda 100644
 --- a/app/src/main/java/io/nekohasekai/sfa/Application.kt
 +++ b/app/src/main/java/io/nekohasekai/sfa/Application.kt
 @@ -18,7 +18,7 @@ import io.nekohasekai.sfa.bg.CrashReportManager
@@ -979,7 +979,7 @@ index 84228c5..de35793 100644
  import io.nekohasekai.sfa.constant.Bugs
  import io.nekohasekai.sfa.database.Settings
  import io.nekohasekai.sfa.utils.AppLifecycleObserver
-@@ -69,7 +69,7 @@ class Application : Application() {
+@@ -70,7 +70,7 @@ class Application : Application() {
              initialize(baseDir, workingDir, tempDir)
              UpdateProfileWork.reconfigureUpdater()
              HookModuleUpdateNotifier.sync(this@Application)
@@ -989,7 +989,7 @@ index 84228c5..de35793 100644
  
          if (Vendor.isPerAppProxyAvailable()) {
 diff --git a/app/src/main/java/io/nekohasekai/sfa/compose/MainActivity.kt b/app/src/main/java/io/nekohasekai/sfa/compose/MainActivity.kt
-index 56b8d41..cd78228 100644
+index 9b93706..50a6616 100644
 --- a/app/src/main/java/io/nekohasekai/sfa/compose/MainActivity.kt
 +++ b/app/src/main/java/io/nekohasekai/sfa/compose/MainActivity.kt
 @@ -108,6 +108,7 @@ import io.nekohasekai.sfa.compat.isWidthAtLeastBreakpointCompat
@@ -1013,7 +1013,7 @@ index 56b8d41..cd78228 100644
  import io.nekohasekai.sfa.compose.theme.Theme
  import io.nekohasekai.sfa.compose.topbar.LocalScaffoldPadding
  import io.nekohasekai.sfa.compose.topbar.LocalTopBarController
-@@ -856,49 +851,15 @@ class MainActivity :
+@@ -864,49 +859,15 @@ class MainActivity :
                  null
              }
  
@@ -1066,7 +1066,7 @@ index 56b8d41..cd78228 100644
          }
          LaunchedEffect(remoteServer?.id) {
              cancelStatus()
-@@ -908,9 +869,7 @@ class MainActivity :
+@@ -916,9 +877,7 @@ class MainActivity :
          }
          LaunchedEffect(
              statusTargetActive,
@@ -1077,7 +1077,7 @@ index 56b8d41..cd78228 100644
          ) {
              if (statusTargetActive) {
                  subscribeStatus()
-@@ -1043,11 +1002,7 @@ class MainActivity :
+@@ -1051,11 +1010,7 @@ class MainActivity :
                          logViewModel = logViewModel,
                          groupsViewModel = groupsViewModel,
                          connectionsViewModel = connectionsViewModel,
@@ -1090,7 +1090,7 @@ index 56b8d41..cd78228 100644
                          modifier = Modifier.fillMaxSize(),
                      )
                      if (!useNavigationRail) {
-@@ -1231,7 +1186,8 @@ class MainActivity :
+@@ -1239,7 +1194,8 @@ class MainActivity :
          val powerReportUnreadCount by PowerReportManager.unreadCount.collectAsState()
          // The crash/OOM report entries are hidden in remote control mode.
          val toolsUnreadCount =
@@ -1100,7 +1100,7 @@ index 56b8d41..cd78228 100644
  
          LaunchedEffect(Unit) {
              withContext(Dispatchers.IO) {
-@@ -1258,7 +1214,7 @@ class MainActivity :
+@@ -1266,7 +1222,7 @@ class MainActivity :
                                              BadgedBox(badge = { Badge(containerColor = MaterialTheme.colorScheme.primary) }) {
                                                  Icon(screen.icon, contentDescription = null)
                                              }
@@ -1109,7 +1109,7 @@ index 56b8d41..cd78228 100644
                                              BadgedBox(badge = { Badge(containerColor = MaterialTheme.colorScheme.error) { Text("!") } }) {
                                                  Icon(screen.icon, contentDescription = null)
                                              }
-@@ -1315,7 +1271,7 @@ class MainActivity :
+@@ -1323,7 +1279,7 @@ class MainActivity :
                                                  BadgedBox(badge = { Badge(containerColor = MaterialTheme.colorScheme.primary) }) {
                                                      Icon(screen.icon, contentDescription = null)
                                                  }
@@ -1545,10 +1545,10 @@ index 8ab1513..26a5419 100644
      }
  }
 diff --git a/app/src/main/java/io/nekohasekai/sfa/compose/screen/dashboard/DashboardCardRenderer.kt b/app/src/main/java/io/nekohasekai/sfa/compose/screen/dashboard/DashboardCardRenderer.kt
-index 5c57f20..42fb3ba 100644
+index dbf9f91..9b43c62 100644
 --- a/app/src/main/java/io/nekohasekai/sfa/compose/screen/dashboard/DashboardCardRenderer.kt
 +++ b/app/src/main/java/io/nekohasekai/sfa/compose/screen/dashboard/DashboardCardRenderer.kt
-@@ -40,14 +40,7 @@ fun DashboardCardRenderer(
+@@ -39,14 +39,7 @@ fun DashboardCardRenderer(
  ) {
      when (cardGroup) {
          CardGroup.ClashMode -> {
@@ -1626,11 +1626,11 @@ index 12ec111..90d7678 100644
                          CardGroup.Profiles -> stringResource(R.string.title_configuration)
                      },
 diff --git a/app/src/main/java/io/nekohasekai/sfa/compose/screen/dashboard/DashboardViewModel.kt b/app/src/main/java/io/nekohasekai/sfa/compose/screen/dashboard/DashboardViewModel.kt
-index fd14366..1da3c24 100644
+index 5ce325e..c9ccada 100644
 --- a/app/src/main/java/io/nekohasekai/sfa/compose/screen/dashboard/DashboardViewModel.kt
 +++ b/app/src/main/java/io/nekohasekai/sfa/compose/screen/dashboard/DashboardViewModel.kt
-@@ -47,6 +47,26 @@ enum class CardWidth {
-     Full,
+@@ -47,6 +47,26 @@ enum class CardPairGroup {
+     Statistics,
  }
  
 +val availableCardGroups = setOfNotNull(
@@ -1682,10 +1682,10 @@ index fd14366..1da3c24 100644
 -        ),
 +    val visibleCards: Set<CardGroup> = availableCardGroups,
 +    val cardOrder: List<CardGroup> = defaultCardOrder,
-     val cardWidths: Map<CardGroup, CardWidth> =
-         mapOf(
-             CardGroup.ClashMode to CardWidth.Full,
-@@ -133,9 +135,9 @@ class DashboardViewModel :
+     val showCardSettingsDialog: Boolean = false,
+ ) {
+     data class DeprecatedNote(val message: String, val migrationLink: String?)
+@@ -123,9 +125,9 @@ class DashboardViewModel :
      internal val commandClient =
          CommandClient(
              viewModelScope,
@@ -1697,7 +1697,7 @@ index fd14366..1da3c24 100644
                  CommandClient.ConnectionType.Groups,
              ),
              this,
-@@ -146,8 +148,7 @@ class DashboardViewModel :
+@@ -136,8 +138,7 @@ class DashboardViewModel :
          val disabledItems = loadDisabledItems()
  
          // Calculate visible items (all items minus disabled)
@@ -1707,7 +1707,7 @@ index fd14366..1da3c24 100644
  
          return DashboardUiState(
              cardOrder = savedOrder,
-@@ -718,21 +719,13 @@ class DashboardViewModel :
+@@ -708,21 +709,13 @@ class DashboardViewModel :
          updateState {
              copy(
                  cardOrder = getDefaultItemOrder(),
@@ -1731,7 +1731,7 @@ index fd14366..1da3c24 100644
  
      private fun loadItemOrder(): List<CardGroup> {
          val savedOrder = Settings.dashboardItemOrder
-@@ -746,13 +739,12 @@ class DashboardViewModel :
+@@ -736,13 +729,12 @@ class DashboardViewModel :
  
              for (i in 0 until jsonArray.length()) {
                  val itemName = jsonArray.getString(i)
@@ -1747,7 +1747,7 @@ index fd14366..1da3c24 100644
  
              order.addAll(newItems)
              order
-@@ -773,15 +765,14 @@ class DashboardViewModel :
+@@ -763,15 +755,14 @@ class DashboardViewModel :
          val savedDisabled = Settings.dashboardDisabledItems
          // Filter out Profiles from disabled items (it cannot be disabled)
          return savedDisabled.mapNotNull { stringToCardGroup(it) }
@@ -3034,18 +3034,18 @@ index 836d0e5..282cf07 100644
      const val SILENT_INSTALL_METHOD = "silent_install_method"
      const val AUTO_UPDATE_ENABLED = "auto_update_enabled"
 diff --git a/app/src/main/java/io/nekohasekai/sfa/database/Settings.kt b/app/src/main/java/io/nekohasekai/sfa/database/Settings.kt
-index 20c0e7b..74d5bb8 100644
+index 0fd720c..e7bce96 100644
 --- a/app/src/main/java/io/nekohasekai/sfa/database/Settings.kt
 +++ b/app/src/main/java/io/nekohasekai/sfa/database/Settings.kt
-@@ -3,7 +3,6 @@ package io.nekohasekai.sfa.database
- import android.os.Build
+@@ -4,7 +4,6 @@ import android.os.Build
  import androidx.room.Room
+ import io.nekohasekai.libbox.Libbox
  import io.nekohasekai.sfa.Application
 -import io.nekohasekai.sfa.BuildConfig
  import io.nekohasekai.sfa.bg.ProxyService
  import io.nekohasekai.sfa.bg.VPNService
  import io.nekohasekai.sfa.constant.Path
-@@ -42,20 +41,8 @@ object Settings {
+@@ -41,20 +40,8 @@ object Settings {
      var serviceMode by dataStore.string(SettingsKey.SERVICE_MODE) { ServiceMode.NORMAL }
      var startedByUser by dataStore.boolean(SettingsKey.STARTED_BY_USER)
  
@@ -3066,7 +3066,7 @@ index 20c0e7b..74d5bb8 100644
      var githubToken by dataStore.string(SettingsKey.GITHUB_TOKEN) { "" }
      var silentInstallEnabled by dataStore.boolean(SettingsKey.SILENT_INSTALL_ENABLED) { false }
      var silentInstallMethod by dataStore.string(SettingsKey.SILENT_INSTALL_METHOD) {
-@@ -65,8 +52,6 @@ object Settings {
+@@ -64,8 +51,6 @@ object Settings {
              "SHIZUKU"
          }
      }
