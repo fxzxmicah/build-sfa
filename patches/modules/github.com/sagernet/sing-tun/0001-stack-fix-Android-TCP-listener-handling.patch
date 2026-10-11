@@ -1,4 +1,4 @@
-From 9cc63de3bae10ea38fc41d87ecd6b01c168d124e Mon Sep 17 00:00:00 2001
+From 7c09494d57e77fa61a8fa8851ac160c8da5b61a4 Mon Sep 17 00:00:00 2001
 From: Fxzx micah <48860358+fxzxmicah@users.noreply.github.com>
 Date: Sat, 12 Sep 2026 00:49:34 +0800
 Subject: [PATCH] stack: fix Android TCP listener handling
@@ -12,7 +12,7 @@ Subject: [PATCH] stack: fix Android TCP listener handling
  create mode 100644 stack_system_address_other.go
 
 diff --git a/stack_system.go b/stack_system.go
-index 46fadb0..eff578b 100644
+index 3ff1c4f..1b3d04f 100644
 --- a/stack_system.go
 +++ b/stack_system.go
 @@ -156,8 +156,9 @@ func (s *System) start() error {

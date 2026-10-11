@@ -1,11 +1,11 @@
-From fd8c22a685ce325899467f5376166d407fe234a8 Mon Sep 17 00:00:00 2001
+From ca7b0904cd3dfe729839de3899ced05ca9101e2b Mon Sep 17 00:00:00 2001
 From: Fxzx micah <48860358+fxzxmicah@users.noreply.github.com>
 Date: Wed, 2 Sep 2026 03:07:50 +0800
 Subject: [PATCH 2/2] build: align Android features with libbox tags
 
 ---
  app/build.gradle.kts                          |  31 +-
- .../sfa/vendor/GitHubUpdateChecker.kt         |  15 +-
+ .../sfa/vendor/GitHubUpdateChecker.kt         |  19 +-
  .../io/nekohasekai/sfa/vendor/UpdateWorker.kt |  11 +-
  .../screen/dashboard/ClashModeFeature.kt}     |  25 +-
  .../sfa/compose/feature/OpenConnectFeature.kt |  43 ++
@@ -75,7 +75,7 @@ Subject: [PATCH 2/2] build: align Android features with libbox tags
  .../nekohasekai/sfa/vendor/VendorInterface.kt |   3 -
  .../java/io/nekohasekai/sfa/vendor/Vendor.kt  |  33 +-
  .../java/io/nekohasekai/sfa/vendor/Vendor.kt  |   9 +-
- 71 files changed, 578 insertions(+), 1598 deletions(-)
+ 71 files changed, 581 insertions(+), 1599 deletions(-)
  rename app/src/{main/java/io/nekohasekai/sfa/compose/screen/dashboard/ClashModeCard.kt => libbox/with/clashapi/io/nekohasekai/sfa/compose/screen/dashboard/ClashModeFeature.kt} (88%)
  create mode 100644 app/src/libbox/with/openconnect/io/nekohasekai/sfa/compose/feature/OpenConnectFeature.kt
  rename app/src/{main/java => libbox/with/openconnect}/io/nekohasekai/sfa/compose/screen/tools/OpenConnectBrowserDialog.kt (100%)
@@ -202,7 +202,7 @@ index cbebfa1..e9f9f8f 100644
      // Xposed API for self-hooking VPN hide module
      compileOnly("de.robv.android.xposed:api:82")
 diff --git a/app/src/github/java/io/nekohasekai/sfa/vendor/GitHubUpdateChecker.kt b/app/src/github/java/io/nekohasekai/sfa/vendor/GitHubUpdateChecker.kt
-index e496b9f..16f5f4b 100644
+index b2135f2..88f23f2 100644
 --- a/app/src/github/java/io/nekohasekai/sfa/vendor/GitHubUpdateChecker.kt
 +++ b/app/src/github/java/io/nekohasekai/sfa/vendor/GitHubUpdateChecker.kt
 @@ -5,7 +5,6 @@ import io.nekohasekai.libbox.Libbox
@@ -213,38 +213,40 @@ index e496b9f..16f5f4b 100644
  import io.nekohasekai.sfa.utils.HTTPClient
  import kotlinx.serialization.SerialName
  import kotlinx.serialization.Serializable
-@@ -25,12 +24,12 @@ class GitHubUpdateChecker : Closeable {
+@@ -25,14 +24,9 @@ class GitHubUpdateChecker : Closeable {
  
      private val json = Json { ignoreUnknownKeys = true }
  
 -    fun checkUpdate(track: UpdateTrack, githubToken: String): UpdateInfo? {
 +    fun checkUpdate(githubToken: String): UpdateInfo? {
-         val releases = getReleases(githubToken)
-         var selected: ReleaseCandidate? = null
- 
-         for (release in releases) {
--            if (!isReleaseInTrack(release, track)) {
-+            if (release.draft || release.prerelease) {
-                 continue
-             }
-             val metadata = runCatching { downloadMetadata(release) }.getOrNull() ?: continue
-@@ -80,16 +79,6 @@ class GitHubUpdateChecker : Closeable {
-         return json.decodeFromString(content)
-     }
- 
--    private fun isReleaseInTrack(release: GitHubRelease, track: UpdateTrack): Boolean {
--        if (release.draft) {
--            return false
--        }
--        return when (track) {
--            UpdateTrack.STABLE -> !release.prerelease
--            UpdateTrack.BETA -> true
--        }
--    }
--
-     private fun isNewerThanCurrent(versionName: String): Boolean = Libbox.compareSemver(versionName, BuildConfig.VERSION_NAME)
- 
-     private fun isBetterVersion(version: VersionMetadata, other: VersionMetadata): Boolean {
+         val request = client.newRequest()
+-        request.setURL(
+-            when (track) {
+-                UpdateTrack.STABLE -> "$RELEASES_URL/latest"
+-                UpdateTrack.BETA -> "$RELEASES_URL?per_page=3"
+-            },
+-        )
++        request.setURL("$RELEASES_URL/latest")
+         request.setHeader("Accept", "application/vnd.github+json")
+         val token = githubToken.trim()
+         if (token.isNotEmpty()) {
+@@ -40,13 +34,10 @@ class GitHubUpdateChecker : Closeable {
+         }
+         request.setUserAgent(HTTPClient.userAgent)
+         val content = request.execute().content.unwrap
+-        val releases = when (track) {
+-            UpdateTrack.STABLE -> listOf(json.decodeFromString<GitHubRelease>(content))
+-            UpdateTrack.BETA -> json.decodeFromString<List<GitHubRelease>>(content)
++        val release = json.decodeFromString<GitHubRelease>(content)
++        if (release.draft || release.prerelease) {
++            return null
+         }
+-        val release = releases.filter { !it.draft }.reduceOrNull { best, candidate ->
+-            if (Libbox.compareSemver(candidate.version, best.version)) candidate else best
+-        } ?: return null
+         if (!Libbox.compareSemver(release.version, BuildConfig.VERSION_NAME)) {
+             return null
+         }
 diff --git a/app/src/github/java/io/nekohasekai/sfa/vendor/UpdateWorker.kt b/app/src/github/java/io/nekohasekai/sfa/vendor/UpdateWorker.kt
 index 059458d..d4a5ba5 100644
 --- a/app/src/github/java/io/nekohasekai/sfa/vendor/UpdateWorker.kt
@@ -967,10 +969,10 @@ index 08295b0..15534a8 100644
                  android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                  android:value="taildrop" />
 diff --git a/app/src/main/java/io/nekohasekai/sfa/Application.kt b/app/src/main/java/io/nekohasekai/sfa/Application.kt
-index 5255583..114abda 100644
+index 402af8e..a2a33cf 100644
 --- a/app/src/main/java/io/nekohasekai/sfa/Application.kt
 +++ b/app/src/main/java/io/nekohasekai/sfa/Application.kt
-@@ -18,7 +18,7 @@ import io.nekohasekai.sfa.bg.CrashReportManager
+@@ -19,7 +19,7 @@ import io.nekohasekai.sfa.bg.CrashReportManager
  import io.nekohasekai.sfa.bg.OOMReportManager
  import io.nekohasekai.sfa.bg.PowerReportManager
  import io.nekohasekai.sfa.bg.UpdateProfileWork
@@ -979,7 +981,7 @@ index 5255583..114abda 100644
  import io.nekohasekai.sfa.constant.Bugs
  import io.nekohasekai.sfa.database.Settings
  import io.nekohasekai.sfa.utils.AppLifecycleObserver
-@@ -70,7 +70,7 @@ class Application : Application() {
+@@ -72,7 +72,7 @@ class Application : Application() {
              initialize(baseDir, workingDir, tempDir)
              UpdateProfileWork.reconfigureUpdater()
              HookModuleUpdateNotifier.sync(this@Application)
@@ -989,10 +991,10 @@ index 5255583..114abda 100644
  
          if (Vendor.isPerAppProxyAvailable()) {
 diff --git a/app/src/main/java/io/nekohasekai/sfa/compose/MainActivity.kt b/app/src/main/java/io/nekohasekai/sfa/compose/MainActivity.kt
-index 9b93706..50a6616 100644
+index db3b95e..68ae95e 100644
 --- a/app/src/main/java/io/nekohasekai/sfa/compose/MainActivity.kt
 +++ b/app/src/main/java/io/nekohasekai/sfa/compose/MainActivity.kt
-@@ -108,6 +108,7 @@ import io.nekohasekai.sfa.compat.isWidthAtLeastBreakpointCompat
+@@ -110,6 +110,7 @@ import io.nekohasekai.sfa.compat.isWidthAtLeastBreakpointCompat
  import io.nekohasekai.sfa.compose.base.GlobalEventBus
  import io.nekohasekai.sfa.compose.base.SelectableMessageDialog
  import io.nekohasekai.sfa.compose.base.UiEvent
@@ -1000,7 +1002,7 @@ index 9b93706..50a6616 100644
  import io.nekohasekai.sfa.compose.component.RemoteStatusBar
  import io.nekohasekai.sfa.compose.component.ServiceStatusBar
  import io.nekohasekai.sfa.compose.component.SnackbarHost
-@@ -127,12 +128,6 @@ import io.nekohasekai.sfa.compose.screen.dashboard.DashboardViewModel
+@@ -129,12 +130,6 @@ import io.nekohasekai.sfa.compose.screen.dashboard.DashboardViewModel
  import io.nekohasekai.sfa.compose.screen.dashboard.GroupsCard
  import io.nekohasekai.sfa.compose.screen.dashboard.groups.GroupsViewModel
  import io.nekohasekai.sfa.compose.screen.log.LogViewModel
@@ -1013,7 +1015,7 @@ index 9b93706..50a6616 100644
  import io.nekohasekai.sfa.compose.theme.Theme
  import io.nekohasekai.sfa.compose.topbar.LocalScaffoldPadding
  import io.nekohasekai.sfa.compose.topbar.LocalTopBarController
-@@ -864,49 +859,15 @@ class MainActivity :
+@@ -866,49 +861,15 @@ class MainActivity :
                  null
              }
  
@@ -1066,7 +1068,7 @@ index 9b93706..50a6616 100644
          }
          LaunchedEffect(remoteServer?.id) {
              cancelStatus()
-@@ -916,9 +877,7 @@ class MainActivity :
+@@ -918,9 +879,7 @@ class MainActivity :
          }
          LaunchedEffect(
              statusTargetActive,
@@ -1077,7 +1079,7 @@ index 9b93706..50a6616 100644
          ) {
              if (statusTargetActive) {
                  subscribeStatus()
-@@ -1051,11 +1010,7 @@ class MainActivity :
+@@ -1048,11 +1007,7 @@ class MainActivity :
                          logViewModel = logViewModel,
                          groupsViewModel = groupsViewModel,
                          connectionsViewModel = connectionsViewModel,
@@ -1090,7 +1092,7 @@ index 9b93706..50a6616 100644
                          modifier = Modifier.fillMaxSize(),
                      )
                      if (!useNavigationRail) {
-@@ -1239,7 +1194,8 @@ class MainActivity :
+@@ -1236,7 +1191,8 @@ class MainActivity :
          val powerReportUnreadCount by PowerReportManager.unreadCount.collectAsState()
          // The crash/OOM report entries are hidden in remote control mode.
          val toolsUnreadCount =
@@ -1100,7 +1102,7 @@ index 9b93706..50a6616 100644
  
          LaunchedEffect(Unit) {
              withContext(Dispatchers.IO) {
-@@ -1266,7 +1222,7 @@ class MainActivity :
+@@ -1263,7 +1219,7 @@ class MainActivity :
                                              BadgedBox(badge = { Badge(containerColor = MaterialTheme.colorScheme.primary) }) {
                                                  Icon(screen.icon, contentDescription = null)
                                              }
@@ -1109,7 +1111,7 @@ index 9b93706..50a6616 100644
                                              BadgedBox(badge = { Badge(containerColor = MaterialTheme.colorScheme.error) { Text("!") } }) {
                                                  Icon(screen.icon, contentDescription = null)
                                              }
-@@ -1323,7 +1279,7 @@ class MainActivity :
+@@ -1320,7 +1276,7 @@ class MainActivity :
                                                  BadgedBox(badge = { Badge(containerColor = MaterialTheme.colorScheme.primary) }) {
                                                      Icon(screen.icon, contentDescription = null)
                                                  }
