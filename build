@@ -1,41 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-source "$root/config.env"
-export LIBBOX_TAGS
-
-output_dir=${OUTPUT_DIR:-$root/dist}
-
-if [[ -z ${SING_BOX_DIR:-} ]]; then
-  work_dir=$(mktemp -d "${BUILD_TMPDIR:-/dev/shm}/build-android.XXXXXX")
-  source_dir="$work_dir/sing-box"
-  trap 'rm -rf "$work_dir"' EXIT
-
-  export GOCACHE="$work_dir/go-build"
-  export GOMODCACHE="$work_dir/go-mod"
-  export GOPATH="$work_dir/go"
-  export GRADLE_USER_HOME="$work_dir/gradle"
-
-  git clone \
-    --branch "$SING_BOX_TAG" \
-    --depth=1 \
-    https://github.com/SagerNet/sing-box.git \
-    "$source_dir"
-  git -C "$source_dir" submodule update --init --depth=1 clients/android
-  git -C "$source_dir/clients/android" fetch --depth=1 origin main
-  git -C "$source_dir/clients/android" checkout --detach FETCH_HEAD
-  git -C "$source_dir/clients/android" submodule update --init --recursive --depth=1
-else
-  source_dir=$SING_BOX_DIR
-fi
-
-android_version=$(sed -n 's/^VERSION_NAME=//p' "$source_dir/clients/android/version.properties")
-if [[ v$android_version != "$SING_BOX_TAG" ]]; then
-  printf 'Android client %s does not match sing-box %s\n' "$android_version" "$SING_BOX_TAG" >&2
-  exit 1
-fi
-
 apply_patches() {
   local source=$1 patch_dir=$2 patch
 
@@ -52,7 +17,7 @@ patch_modules() {
   [[ -d $root/patches/modules ]] || return 0
   while IFS= read -r -d '' patch_dir; do
     module=${patch_dir#"$root/patches/modules/"}
-    module_dir=$(mktemp -d "${RUNNER_TEMP:-$work_dir}/${module##*/}.XXXXXX")
+    module_dir=$(mktemp -d "$work_dir/${module##*/}.XXXXXX")
     go mod download "$module"
     cp -a "$(go list -m -f '{{.Dir}}' "$module")/." "$module_dir/"
     chmod -R u+w "$module_dir"
@@ -60,6 +25,39 @@ patch_modules() {
     go mod edit -replace "$module=$module_dir"
   done < <(find "$root/patches/modules" -type f -name '*.patch' -printf '%h\0' | sort -zu)
 }
+
+root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+source "$root/config.env"
+export LIBBOX_TAGS
+
+output_dir=${OUTPUT_DIR:-$root/dist}
+work_dir=$(mktemp -d "${BUILD_TMP:-/dev/shm}/build-android.XXXXXX")
+source_dir="$work_dir/sing-box"
+trap 'rm -rf "$work_dir"' EXIT
+
+export GOCACHE=${GOCACHE:-$work_dir/go-build}
+export GOMODCACHE=${GOMODCACHE:-$work_dir/go-mod}
+export GOPATH=${GOPATH:-$work_dir/go}
+export GRADLE_USER_HOME=${GRADLE_USER_HOME:-$work_dir/gradle}
+
+git clone \
+  --branch "$SING_BOX_TAG" \
+  --depth=1 \
+  https://github.com/SagerNet/sing-box.git \
+  "$source_dir"
+git clone \
+  --branch main \
+  --depth=1 \
+  --recurse-submodules \
+  --shallow-submodules \
+  https://github.com/SagerNet/sing-box-for-android.git \
+  "$source_dir/clients/android"
+
+android_version=$(sed -n 's/^VERSION_NAME=//p' "$source_dir/clients/android/version.properties")
+if [[ v$android_version != "$SING_BOX_TAG" ]]; then
+  printf 'Android client %s does not match sing-box %s\n' "$android_version" "$SING_BOX_TAG" >&2
+  exit 1
+fi
 
 apply_patches "$source_dir" "$root/patches/sing-box"
 apply_patches "$source_dir/clients/android" "$root/patches/android"
@@ -88,7 +86,12 @@ mkdir -p clients/android/app/libs
 cp libbox.aar clients/android/app/libs/
 
 cd clients/android
-export SFA_UPDATE_REPOSITORY=${SFA_UPDATE_REPOSITORY:-${GITHUB_REPOSITORY:?Set SFA_UPDATE_REPOSITORY outside GitHub Actions}}
+cp "${ANDROID_KEYSTORE:-$root/release.keystore}" app/release.keystore
+if [[ -f $root/local.properties ]]; then
+  cp "$root/local.properties" local.properties
+fi
+export SFA_UPDATE_REPOSITORY=${SFA_UPDATE_REPOSITORY:?Set SFA_UPDATE_REPOSITORY to the update repository}
+
 ./gradlew \
   --build-cache \
   --parallel \
@@ -101,4 +104,4 @@ printf '{\n  "version_code": %s,\n  "version_name": "%s"\n}\n' \
   "$(sed -n 's/^VERSION_CODE=//p' version.properties)" \
   "$(sed -n 's/^VERSION_NAME=//p' version.properties)" \
   > "$output_dir/SFA-version-metadata.json"
-sha256sum "$output_dir"/* > "$output_dir/SHA256SUMS"
+(cd "$output_dir" && sha256sum *.apk libbox.aar SFA-version-metadata.json > SHA256SUMS)

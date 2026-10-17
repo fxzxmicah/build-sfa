@@ -1,83 +1,40 @@
-# sing-box Android build
+# sing-box for Android Build
 
-This repository builds signed SFA APKs from version-matched upstream sources.
-The libbox and Android application choices are both explicit in `config.env`.
+Build signed sing-box for Android APKs with selected libbox features and
+downstream patches. Run `./build` locally or use GitHub Actions to build and
+publish a Release.
 
-## Version model
+## Configuration
 
-`config.env` contains the only manually maintained upstream version:
-`SING_BOX_TAG`.
+Edit `config.env` to select the upstream tag, libbox tags, Android flavor, and
+build type. `SING_BOX_TAG` is the only manually maintained version.
 
-- The Android client comes from its `main` branch and must declare the same
-  version as `SING_BOX_TAG`. This avoids stale submodule pointers while refusing
-  to combine different released versions.
-- The sing-tun version comes from that tag's `go.mod`.
-- The gomobile version also comes from that tag's `go.mod`.
-- The Android NDK release comes from the pinned sing-box build workflow.
-- The Go toolchain comes from the pinned sing-box `go.mod`.
+The Android client comes from upstream `main` and must declare the same version
+as the selected sing-box tag. Go modules and Gomobile follow that tag's
+`go.mod`.
 
-Updating sing-box therefore requires changing only `SING_BOX_TAG`.
+The default `otherRelease` variant uses GitHub updates, release signing and
+minification, and builds all upstream ABI splits and the universal APK.
+The Android API level follows upstream's main libbox build variant.
 
-When run locally, the build obtains a clean upstream tree and keeps the source,
-Go caches, Gomobile installation, and Gradle cache under
-`${BUILD_TMPDIR:-/dev/shm}`. The temporary tree is removed on exit; only
-`dist` persists. GitHub Actions continues to use its runner and managed caches.
+Default libbox tags retain gVisor, QUIC protocols, uTLS, and upstream
+compatibility tags. Without `with_grpc`, sing-box uses gRPC-lite.
+Other optional subsystems require their corresponding build tags.
 
-## Build scope
+Android source sets follow `with_clash_api`, `with_tailscale`,
+`with_openvpn`, `with_openconnect`, and `with_usbip`. Absent features and their
+UI are not compiled; Ghostty dependencies are included only with Tailscale.
 
-The libbox build and non-legacy Android flavors follow the API selected by
-upstream's main libbox variant. The build targets every Android architecture,
-and its tags are deliberately smaller than the upstream all-feature Android
-defaults:
+## Local Build
 
-- `with_gvisor` keeps the mixed TUN stack used when the current configuration
-  does not specify `stack`;
-- `with_quic` provides Hysteria, Hysteria 2, and TUIC;
-- `with_utls` provides uTLS and is required by Reality clients;
-- `badlinkname` and `tfogo_checklinkname0` are the upstream compatibility tags.
+Prepare a Linux build environment with Git, Go, Java 17, the Android SDK/NDK,
+and standard GNU command-line tools. Use the Go version from the selected
+upstream tag's `go.mod` and the NDK release from
+`.github/workflows/build.yml` in that tag. Gradle uses the Android client's
+wrapper; no separate Gradle installation is needed.
 
-The build intentionally excludes the optional NaiveProxy, WireGuard, Clash
-API, Tailscale, OpenVPN, OpenConnect, DHCP, ACME, Cloudflared, and USB/IP
-subsystems. Standard gRPC is also excluded: sing-box automatically uses its
-built-in gRPC-lite transport when `with_grpc` is absent. Protocols registered
-without optional build tags remain available. Adding `with_clash_api`,
-`with_tailscale`, `with_openvpn`, `with_openconnect`, or `with_usbip` to
-`LIBBOX_TAGS` also selects that feature's Android source set; absent features
-and their UI are not compiled. Ghostty dependencies are likewise limited to
-Tailscale builds.
-
-The SFA build uses the `otherRelease` variant: `other` selects the GitHub
-distribution rather than Google Play or legacy Android, while `release`
-enables minification and release signing. It produces the client's standard
-four ABI splits and universal APK. Updates always use stable GitHub Releases
-from the current Actions repository, or `SFA_UPDATE_REPOSITORY` for a local
-build; source and release-channel selectors are removed.
-
-Every successful GitHub Actions build publishes the generated files directly
-to the Release named by `SING_BOX_TAG`. Rebuilding the same version replaces
-its assets instead of creating another Release. The build reads `VERSION_CODE`
-and `VERSION_NAME` from the selected Android client and generates
-`SFA-version-metadata.json` automatically; no version metadata is maintained
-in this repository.
-
-The platform command backend does not require `with_clash_api`: SFA still gets
-logs, status, connection statistics, and outbound groups without exposing a
-Clash API server. If a configuration explicitly requests Clash API while the
-tag is absent, sing-box retains its normal missing-feature error.
-
-The GitHub Release contains:
-
-- the signed ABI-specific and universal APKs;
-- `libbox.aar`;
-- `SHA256SUMS`.
-
-## Signing
-
-Create one keystore and retain it permanently. Configure these GitHub Actions
-secrets:
-
-- `ANDROID_KEYSTORE_BASE64`: base64 of the keystore;
-- `ANDROID_LOCAL_PROPERTIES`: base64 of a properties file containing:
+Place your keystore at `release.keystore` in this repository and create
+`local.properties` alongside it:
 
 ```properties
 KEYSTORE_PASS=...
@@ -85,40 +42,67 @@ ALIAS_NAME=...
 ALIAS_PASS=...
 ```
 
-The Android client decodes `ANDROID_LOCAL_PROPERTIES` itself. The signing
-identity must remain unchanged for Android to accept later APKs as updates.
+Then run:
+
+```sh
+export ANDROID_HOME=/absolute/path/to/android-sdk
+export ANDROID_NDK_HOME=/absolute/path/to/android-ndk
+export SFA_UPDATE_REPOSITORY=owner/repository
+./build
+```
+
+The script downloads fresh sources, applies patches, and builds all outputs.
+Retain the signing identity for future APK updates.
+
+Optional environment settings:
+
+- `ANDROID_KEYSTORE`: absolute keystore path instead of `release.keystore`.
+- `LOCAL_PROPERTIES`: base64-encoded signing properties, read directly by the
+  Android client in preference to file properties.
+- `OUTPUT_DIR`: absolute output directory; default is `dist/` in this repository.
+- `BUILD_TMP`: existing temporary directory parent; default is `/dev/shm`.
+- `GOCACHE`, `GOMODCACHE`, `GOPATH`, `GRADLE_USER_HOME`: existing cache/tool
+  locations to reuse instead of temporary locations.
+
+Temporary sources, module copies, and default caches are removed on exit;
+externally configured caches are retained. Provide enough temporary space for
+all-architecture builds, on a filesystem that permits executable files.
+
+## GitHub Actions
+
+Configure these repository secrets:
+
+- `ANDROID_KEYSTORE_BASE64`: base64-encoded release keystore.
+- `ANDROID_LOCAL_PROPERTIES`: base64-encoded signing properties shown above.
+
+Actions prepares toolchains, caches, and signing, then runs `build` once.
+
+Successful builds publish directly to the Release named by `SING_BOX_TAG`.
+Rebuilding a version replaces its assets. App updates use stable GitHub
+Releases from `SFA_UPDATE_REPOSITORY`, set to the current repository in Actions.
+
+## Outputs
+
+`dist/` contains:
+
+- Signed ABI-specific and universal APKs.
+- `libbox.aar`.
+- `SFA-version-metadata.json`, generated from the Android client's version.
+- `SHA256SUMS` with relative filenames.
 
 ## Patches
 
-Maintain each logical fix as a commit on the corresponding source repository's
-`downstream` branch, then export it with `git format-patch`. Patch files are
-derived artifacts and should not be edited manually. They are applied in
-lexical order:
+Maintain logical changes as commits on the source repository's `downstream`
+branch and export them with `git format-patch`. Do not hand-edit exported
+patches. Each directory's patches apply in lexical order:
 
 ```text
-patches/sing-box/0001-description.patch
-patches/android/0001-description.patch
-patches/modules/github.com/sagernet/sing-tun/0001-description.patch
+patches/sing-box/*.patch
+patches/android/*.patch
+patches/modules/<full-go-module-path>/*.patch
 ```
 
-For example:
-
-```sh
-git format-patch -1 <commit> --output-directory \
-  /path/to/patches/modules/github.com/sagernet/sing-tun
-```
-
-Go module patch directories use their complete module paths. The build
-automatically copies every patched module into temporary memory, applies its
-patch series, and adds the corresponding `go mod replace`; adding another
-module therefore requires no build-script change.
-
-The sing-tun patch changes the system stack's Android TCP forwarders to listen
-on the dual-stack wildcard address. This avoids binding them to a TUN address
-shared by separate per-user VPN instances; UDP is unaffected because the mixed
-stack handles it through gVisor instead of these listeners. It also closes
-accepted TCP connections whose NAT session has already disappeared. Other
-platforms retain sing-tun's address-specific listeners.
-
-If an upstream update makes a patch inapplicable, source preparation fails
-instead of silently building without it.
+Individual component directories are optional. Patched Go modules are copied
+to writable temporary directories and selected through `go mod replace`.
+When updating the upstream tag, rebase affected downstream commits and
+re-export their patches. Version mismatches and patch failures stop the build.
