@@ -1,4 +1,4 @@
-From 7c09494d57e77fa61a8fa8851ac160c8da5b61a4 Mon Sep 17 00:00:00 2001
+From b41121317201ed014ef53003c6c1c82b86c4ea56 Mon Sep 17 00:00:00 2001
 From: Fxzx micah <48860358+fxzxmicah@users.noreply.github.com>
 Date: Sat, 12 Sep 2026 00:49:34 +0800
 Subject: [PATCH] stack: fix Android TCP listener handling
@@ -12,7 +12,7 @@ Subject: [PATCH] stack: fix Android TCP listener handling
  create mode 100644 stack_system_address_other.go
 
 diff --git a/stack_system.go b/stack_system.go
-index 3ff1c4f..1b3d04f 100644
+index 7d96624..9b6f0e3 100644
 --- a/stack_system.go
 +++ b/stack_system.go
 @@ -156,8 +156,9 @@ func (s *System) start() error {
@@ -38,7 +38,7 @@ index 3ff1c4f..1b3d04f 100644
  				break
  			}
 @@ -397,6 +399,7 @@ func (s *System) acceptLoop(listener net.Listener, tcpNat *TCPNat) {
- 		session := tcpNat.LookupBack(connPort)
+ 		session := tcpNat.LookupBack(connPort, 0)
  		if session == nil {
  			s.logger.Trace(E.New("unknown session with port ", connPort))
 +			conn.Close()
