@@ -1,0 +1,934 @@
+From 665264f072ca5cc513dd60c159afc5ea76337786 Mon Sep 17 00:00:00 2001
+From: Fxzx micah <48860358+fxzxmicah@users.noreply.github.com>
+Date: Thu, 12 Nov 2026 23:30:47 +0800
+Subject: [PATCH] vpn: surface Lockdown status and constraints
+
+---
+ .../nekohasekai/sfa/bg/ServiceConnection.kt   |   7 +-
+ .../java/io/nekohasekai/sfa/bg/VPNService.kt  |  56 ++++++--
+ .../nekohasekai/sfa/compose/MainActivity.kt   |  36 +++++-
+ .../nekohasekai/sfa/compose/base/VpnState.kt  |   5 +
+ .../screen/dashboard/DashboardScreen.kt       |  78 +++++++-----
+ .../profileoverride/PerAppProxyScreen.kt      |  11 +-
+ .../screen/settings/ProfileOverrideScreen.kt  |  81 +++++-------
+ .../screen/settings/ServiceSettingsScreen.kt  | 120 ++++++++++++------
+ .../io/nekohasekai/sfa/constant/Action.kt     |   1 +
+ .../nekohasekai/sfa/constant/SettingsKey.kt   |   1 +
+ .../io/nekohasekai/sfa/database/Settings.kt   |   1 +
+ app/src/main/res/values-fa/strings.xml        |   5 +
+ app/src/main/res/values-ru-rRU/strings.xml    |   5 +
+ app/src/main/res/values-zh-rCN/strings.xml    |   5 +
+ app/src/main/res/values-zh-rTW/strings.xml    |   5 +
+ app/src/main/res/values/strings.xml           |   5 +
+ 16 files changed, 282 insertions(+), 140 deletions(-)
+ create mode 100644 app/src/main/java/io/nekohasekai/sfa/compose/base/VpnState.kt
+
+diff --git a/app/src/main/java/io/nekohasekai/sfa/bg/ServiceConnection.kt b/app/src/main/java/io/nekohasekai/sfa/bg/ServiceConnection.kt
+index 0b27345..22a77c4 100644
+--- a/app/src/main/java/io/nekohasekai/sfa/bg/ServiceConnection.kt
++++ b/app/src/main/java/io/nekohasekai/sfa/bg/ServiceConnection.kt
+@@ -52,10 +52,12 @@ class ServiceConnection(private val context: Context, callback: Callback, privat
+         connectJob?.cancel()
+         connectJob = null
+         Settings.dataStore.unregisterChangeListener(this)
++        if (register) service?.unregisterCallback(callback)
+         try {
+             context.unbindService(this)
+         } catch (_: IllegalArgumentException) {
+         }
++        service = null
+         Log.d(TAG, "request disconnect")
+     }
+ 
+@@ -84,11 +86,6 @@ class ServiceConnection(private val context: Context, callback: Callback, privat
+     }
+ 
+     override fun onServiceDisconnected(name: ComponentName?) {
+-        try {
+-            service?.unregisterCallback(callback)
+-        } catch (e: RemoteException) {
+-            Log.e(TAG, "cleanup service connection", e)
+-        }
+         Log.d(TAG, "service disconnected")
+     }
+ 
+diff --git a/app/src/main/java/io/nekohasekai/sfa/bg/VPNService.kt b/app/src/main/java/io/nekohasekai/sfa/bg/VPNService.kt
+index fad2b8f..ac0e9fe 100644
+--- a/app/src/main/java/io/nekohasekai/sfa/bg/VPNService.kt
++++ b/app/src/main/java/io/nekohasekai/sfa/bg/VPNService.kt
+@@ -2,17 +2,21 @@ package io.nekohasekai.sfa.bg
+ 
+ import android.content.Intent
+ import android.content.pm.PackageManager.NameNotFoundException
++import android.net.IpPrefix
+ import android.net.ProxyInfo
+ import android.net.VpnService
++import android.os.Binder
+ import android.os.Build
+ import android.os.IBinder
+ import android.util.Log
+ import io.nekohasekai.libbox.Libbox
+ import io.nekohasekai.libbox.Notification
+ import io.nekohasekai.libbox.TunOptions
++import io.nekohasekai.sfa.constant.Action
+ import io.nekohasekai.sfa.database.Settings
+ import io.nekohasekai.sfa.ktx.toIpPrefix
+ import io.nekohasekai.sfa.ktx.toList
++import java.net.InetAddress
+ import kotlinx.coroutines.Dispatchers
+ import kotlinx.coroutines.runBlocking
+ import kotlinx.coroutines.withContext
+@@ -25,10 +29,18 @@ class VPNService :
+     }
+ 
+     private val service = BoxService(this, this)
++    private val policy = PolicyBinder()
++
++    inner class PolicyBinder : Binder() {
++        val lockdownEnabled: Boolean
++            get() = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && isAlwaysOn && isLockdownEnabled
++    }
+ 
+     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int) = service.onStartCommand()
+ 
+     override fun onBind(intent: Intent): IBinder {
++        if (intent.action == Action.VPN_POLICY) return policy
++
+         val binder = super.onBind(intent)
+         if (binder != null) {
+             return binder
+@@ -49,7 +61,7 @@ class VPNService :
+     }
+ 
+     override fun autoDetectInterfaceControl(fd: Int) {
+-        protect(fd)
++        check(protect(fd)) { "android: failed to protect outbound socket from VPN" }
+     }
+ 
+     var systemProxyAvailable = false
+@@ -63,6 +75,8 @@ class VPNService :
+                 .setSession("sing-box")
+                 .setMtu(options.mtu)
+ 
++        val lockdown = policy.lockdownEnabled
++
+         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+             builder.setMetered(false)
+         }
+@@ -83,6 +97,10 @@ class VPNService :
+             builder.addAddress(address.address(), address.prefix())
+         }
+ 
++        if (lockdown && !options.autoRoute) {
++            Log.w(TAG, "VPN Lockdown blocks non-exempt applications outside VPN routes; auto_route is disabled")
++        }
++
+         if (options.autoRoute) {
+             if (options.dnsMode.value != Libbox.DNSModeDisabled) {
+                 val dnsServerAddress = options.dnsServerAddress
+@@ -92,13 +110,32 @@ class VPNService :
+             }
+ 
+             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+-                val inet4RouteAddress = options.inet4RouteAddress
+-                if (inet4RouteAddress.hasNext()) {
+-                    while (inet4RouteAddress.hasNext()) {
+-                        builder.addRoute(inet4RouteAddress.next().toIpPrefix())
++                val inet4RouteAddress = buildList {
++                    val routes = options.inet4RouteAddress
++                    while (routes.hasNext()) {
++                        add(routes.next().toIpPrefix())
+                     }
+-                } else if (options.inet4Address.hasNext()) {
+-                    builder.addRoute("0.0.0.0", 0)
++                    if (isEmpty() && options.inet4Address.hasNext()) {
++                        add(IpPrefix(InetAddress.getByName("0.0.0.0"), 0))
++                    }
++                }
++                val inet4RouteExcludeAddress = buildList {
++                    val routes = options.inet4RouteExcludeAddress
++                    while (routes.hasNext()) {
++                        add(routes.next().toIpPrefix())
++                    }
++                }
++                // An excluded /0 must not become more-specific included /1 routes.
++                for (route in inet4RouteAddress - inet4RouteExcludeAddress) {
++                    if (route.prefixLength == 0 && lockdown && Settings.lockdownSplitDefaultRoute) {
++                        builder.addRoute("0.0.0.0", 1)
++                        builder.addRoute("128.0.0.0", 1)
++                    } else {
++                        builder.addRoute(route)
++                    }
++                }
++                for (route in inet4RouteExcludeAddress) {
++                    builder.excludeRoute(route)
+                 }
+ 
+                 val inet6RouteAddress = options.inet6RouteAddress
+@@ -110,11 +147,6 @@ class VPNService :
+                     builder.addRoute("::", 0)
+                 }
+ 
+-                val inet4RouteExcludeAddress = options.inet4RouteExcludeAddress
+-                while (inet4RouteExcludeAddress.hasNext()) {
+-                    builder.excludeRoute(inet4RouteExcludeAddress.next().toIpPrefix())
+-                }
+-
+                 val inet6RouteExcludeAddress = options.inet6RouteExcludeAddress
+                 while (inet6RouteExcludeAddress.hasNext()) {
+                     builder.excludeRoute(inet6RouteExcludeAddress.next().toIpPrefix())
+diff --git a/app/src/main/java/io/nekohasekai/sfa/compose/MainActivity.kt b/app/src/main/java/io/nekohasekai/sfa/compose/MainActivity.kt
+index cccb542..21d5ce7 100644
+--- a/app/src/main/java/io/nekohasekai/sfa/compose/MainActivity.kt
++++ b/app/src/main/java/io/nekohasekai/sfa/compose/MainActivity.kt
+@@ -2,12 +2,15 @@ package io.nekohasekai.sfa.compose
+ 
+ import android.Manifest
+ import android.annotation.SuppressLint
++import android.content.ComponentName
+ import android.content.ContentResolver
++import android.content.Context
+ import android.content.Intent
+ import android.net.Uri
+ import android.net.VpnService
+ import android.os.Build
+ import android.os.Bundle
++import android.os.IBinder
+ import android.util.Log
+ import androidx.activity.compose.BackHandler
+ import androidx.activity.compose.setContent
+@@ -102,9 +105,11 @@ import io.nekohasekai.sfa.bg.OOMReportManager
+ import io.nekohasekai.sfa.bg.PowerReportManager
+ import io.nekohasekai.sfa.bg.ServiceConnection
+ import io.nekohasekai.sfa.bg.ServiceNotification
++import io.nekohasekai.sfa.bg.VPNService
+ import io.nekohasekai.sfa.compat.WindowSizeClassCompat
+ import io.nekohasekai.sfa.compat.isWidthAtLeastBreakpointCompat
+ import io.nekohasekai.sfa.compose.base.GlobalEventBus
++import io.nekohasekai.sfa.compose.base.LocalVpnLockdown
+ import io.nekohasekai.sfa.compose.base.SelectableMessageDialog
+ import io.nekohasekai.sfa.compose.base.UiEvent
+ import io.nekohasekai.sfa.compose.component.RemoteStatusBar
+@@ -155,6 +160,22 @@ class MainActivity :
+     private val connection = ServiceConnection(this, this)
+     private lateinit var dashboardViewModel: DashboardViewModel
+     private var currentServiceStatus by mutableStateOf(Status.Stopped)
++    private var vpnLockdownEnabled by mutableStateOf<Boolean?>(null)
++    private var vpnPolicy: VPNService.PolicyBinder? = null
++
++    private val vpnPolicyConnection = object : android.content.ServiceConnection {
++        override fun onServiceConnected(name: ComponentName, binder: IBinder) {
++            val policy = binder as VPNService.PolicyBinder
++            vpnPolicy = policy
++            vpnLockdownEnabled = policy.lockdownEnabled
++        }
++
++        override fun onServiceDisconnected(name: ComponentName?) {
++            vpnPolicy = null
++            vpnLockdownEnabled = null
++        }
++    }
++
+     private var currentAlert by mutableStateOf<Pair<Alert, String?>?>(null)
+     private var showLocationPermissionDialog by mutableStateOf(false)
+     private var showBackgroundLocationDialog by mutableStateOf(false)
+@@ -214,6 +235,11 @@ class MainActivity :
+ 
+     override fun onCreate(savedInstanceState: Bundle?) {
+         super.onCreate(savedInstanceState)
++        bindService(
++            Intent(this, VPNService::class.java).setAction(Action.VPN_POLICY),
++            vpnPolicyConnection,
++            Context.BIND_AUTO_CREATE,
++        )
+         ConfigurationCompat.getLocales(resources.configuration)[0]?.let { locale ->
+             runCatching {
+                 Libbox.setLocale(locale.toLanguageTag())
+@@ -244,12 +270,19 @@ class MainActivity :
+ 
+             setContent {
+                 Theme {
+-                    App()
++                    CompositionLocalProvider(LocalVpnLockdown provides vpnLockdownEnabled) {
++                        App()
++                    }
+                 }
+             }
+         }
+     }
+ 
++    override fun onResume() {
++        super.onResume()
++        vpnLockdownEnabled = vpnPolicy?.lockdownEnabled
++    }
++
+     override fun onNewIntent(intent: Intent) {
+         super.onNewIntent(intent)
+         handleIntent(intent)
+@@ -1498,6 +1531,7 @@ class MainActivity :
+ 
+     override fun onDestroy() {
+         connection.disconnect()
++        unbindService(vpnPolicyConnection)
+         super.onDestroy()
+     }
+ 
+diff --git a/app/src/main/java/io/nekohasekai/sfa/compose/base/VpnState.kt b/app/src/main/java/io/nekohasekai/sfa/compose/base/VpnState.kt
+new file mode 100644
+index 0000000..b831882
+--- /dev/null
++++ b/app/src/main/java/io/nekohasekai/sfa/compose/base/VpnState.kt
+@@ -0,0 +1,5 @@
++package io.nekohasekai.sfa.compose.base
++
++import androidx.compose.runtime.staticCompositionLocalOf
++
++val LocalVpnLockdown = staticCompositionLocalOf<Boolean?> { null }
+diff --git a/app/src/main/java/io/nekohasekai/sfa/compose/screen/dashboard/DashboardScreen.kt b/app/src/main/java/io/nekohasekai/sfa/compose/screen/dashboard/DashboardScreen.kt
+index 78d08d1..ae6d51d 100644
+--- a/app/src/main/java/io/nekohasekai/sfa/compose/screen/dashboard/DashboardScreen.kt
++++ b/app/src/main/java/io/nekohasekai/sfa/compose/screen/dashboard/DashboardScreen.kt
+@@ -12,14 +12,15 @@ import androidx.compose.foundation.lazy.items
+ import androidx.compose.material.icons.Icons
+ import androidx.compose.material.icons.filled.GridView
+ import androidx.compose.material.icons.filled.MoreVert
++import androidx.compose.material.icons.outlined.Lock
++import androidx.compose.material3.AlertDialog
+ import androidx.compose.material3.CircularProgressIndicator
+ import androidx.compose.material3.DropdownMenu
+-import androidx.compose.material3.DropdownMenuItem
+ import androidx.compose.material3.ExperimentalMaterial3Api
+ import androidx.compose.material3.Icon
+ import androidx.compose.material3.IconButton
+-import androidx.compose.material3.MaterialTheme
+ import androidx.compose.material3.Text
++import androidx.compose.material3.TextButton
+ import androidx.compose.material3.TopAppBar
+ import androidx.compose.material3.rememberModalBottomSheetState
+ import androidx.compose.runtime.Composable
+@@ -36,6 +37,7 @@ import androidx.compose.ui.res.stringResource
+ import androidx.compose.ui.unit.dp
+ import androidx.lifecycle.viewmodel.compose.viewModel
+ import io.nekohasekai.sfa.R
++import io.nekohasekai.sfa.compose.base.LocalVpnLockdown
+ import io.nekohasekai.sfa.compose.component.RemoteControlMenuItems
+ import io.nekohasekai.sfa.compose.component.rememberRemoteServers
+ import io.nekohasekai.sfa.compose.navigation.NewProfileArgs
+@@ -62,40 +64,46 @@ fun DashboardScreen(
+     val isRemote = remoteServer != null
+     val remoteServers by rememberRemoteServers()
+     var showOthersMenu by remember { mutableStateOf(false) }
++    val lockdown = LocalVpnLockdown.current
++    var showLockdown by remember { mutableStateOf(false) }
++    val context = LocalContext.current
+ 
+     OverrideTopBar {
+         TopAppBar(
+             title = { Text(stringResource(R.string.title_dashboard)) },
+             actions = {
+-                Box {
+-                    IconButton(onClick = { showOthersMenu = true }) {
++                if (!isRemote && lockdown == true) {
++                    IconButton(onClick = { showLockdown = true }) {
+                         Icon(
+-                            imageVector = Icons.Default.MoreVert,
+-                            contentDescription = stringResource(R.string.title_others),
++                            imageVector = Icons.Outlined.Lock,
++                            contentDescription = stringResource(R.string.vpn_lockdown_title),
+                         )
+                     }
+-                    DropdownMenu(
+-                        expanded = showOthersMenu,
+-                        onDismissRequest = { showOthersMenu = false },
+-                    ) {
+-                        DropdownMenuItem(
+-                            text = { Text(stringResource(R.string.dashboard_items)) },
+-                            leadingIcon = {
+-                                Icon(
+-                                    imageVector = Icons.Default.GridView,
+-                                    contentDescription = null,
+-                                    tint = MaterialTheme.colorScheme.primary,
+-                                )
+-                            },
+-                            onClick = {
+-                                showOthersMenu = false
+-                                viewModel.toggleCardSettingsDialog()
+-                            },
+-                        )
+-                        RemoteControlMenuItems(
+-                            servers = remoteServers,
+-                            onAction = { showOthersMenu = false },
+-                        )
++                }
++                IconButton(onClick = viewModel::toggleCardSettingsDialog) {
++                    Icon(
++                        imageVector = Icons.Default.GridView,
++                        contentDescription = stringResource(R.string.dashboard_items),
++                    )
++                }
++                if (remoteServers.isNotEmpty()) {
++                    Box {
++                        IconButton(onClick = { showOthersMenu = true }) {
++                            Icon(
++                                imageVector = Icons.Default.MoreVert,
++                                contentDescription = stringResource(R.string.title_others),
++                            )
++                        }
++                        DropdownMenu(
++                            expanded = showOthersMenu,
++                            onDismissRequest = { showOthersMenu = false },
++                        ) {
++                            RemoteControlMenuItems(
++                                servers = remoteServers,
++                                onAction = { showOthersMenu = false },
++                                leadingDivider = false,
++                            )
++                        }
+                     }
+                 }
+             },
+@@ -104,7 +112,19 @@ fun DashboardScreen(
+ 
+     val sheetState = rememberModalBottomSheetState()
+     val scope = rememberCoroutineScope()
+-    val context = LocalContext.current
++
++    if (showLockdown && !isRemote && lockdown == true) {
++        AlertDialog(
++            onDismissRequest = { showLockdown = false },
++            title = { Text(stringResource(R.string.vpn_lockdown_title)) },
++            text = { Text(stringResource(R.string.vpn_lockdown_description)) },
++            confirmButton = {
++                TextButton(onClick = { showLockdown = false }) {
++                    Text(stringResource(android.R.string.ok))
++                }
++            },
++        )
++    }
+ 
+     // Show dashboard settings bottom sheet
+     if (uiState.showCardSettingsDialog) {
+diff --git a/app/src/main/java/io/nekohasekai/sfa/compose/screen/profileoverride/PerAppProxyScreen.kt b/app/src/main/java/io/nekohasekai/sfa/compose/screen/profileoverride/PerAppProxyScreen.kt
+index 2145226..497b278 100644
+--- a/app/src/main/java/io/nekohasekai/sfa/compose/screen/profileoverride/PerAppProxyScreen.kt
++++ b/app/src/main/java/io/nekohasekai/sfa/compose/screen/profileoverride/PerAppProxyScreen.kt
+@@ -78,6 +78,7 @@ import androidx.compose.ui.window.DialogProperties
+ import com.android.tools.smali.dexlib2.dexbacked.DexBackedDexFile
+ import io.nekohasekai.sfa.Application
+ import io.nekohasekai.sfa.R
++import io.nekohasekai.sfa.compose.base.LocalVpnLockdown
+ import io.nekohasekai.sfa.compose.base.UiEvent
+ import io.nekohasekai.sfa.compose.base.rememberApplyServiceChangeNotifier
+ import io.nekohasekai.sfa.compose.shared.AppSelectionCard
+@@ -91,14 +92,14 @@ import io.nekohasekai.sfa.database.Settings
+ import io.nekohasekai.sfa.ktx.clipboardText
+ import io.nekohasekai.sfa.vendor.PackageQueryManager
+ import io.nekohasekai.sfa.vendor.PrivilegedAccessRequiredException
++import java.io.File
++import java.util.concurrent.atomic.AtomicInteger
++import java.util.zip.ZipFile
+ import kotlinx.coroutines.Dispatchers
+ import kotlinx.coroutines.async
+ import kotlinx.coroutines.awaitAll
+ import kotlinx.coroutines.launch
+ import kotlinx.coroutines.withContext
+-import java.io.File
+-import java.util.concurrent.atomic.AtomicInteger
+-import java.util.zip.ZipFile
+ 
+ private data class LoadResult(val proxyMode: Int, val packages: List<PackageCache>, val selectedUids: Set<Int>)
+ 
+@@ -115,6 +116,10 @@ fun PerAppProxyScreen(
+     onBack: () -> Unit,
+     serviceStatus: Status = Status.Stopped,
+ ) {
++    val lockdown = LocalVpnLockdown.current
++    LaunchedEffect(lockdown) {
++        if (lockdown == true) onBack()
++    }
+     val context = LocalContext.current
+     val focusManager = LocalFocusManager.current
+     val coroutineScope = rememberCoroutineScope()
+diff --git a/app/src/main/java/io/nekohasekai/sfa/compose/screen/settings/ProfileOverrideScreen.kt b/app/src/main/java/io/nekohasekai/sfa/compose/screen/settings/ProfileOverrideScreen.kt
+index 2cd0b2c..cc3d57d 100644
+--- a/app/src/main/java/io/nekohasekai/sfa/compose/screen/settings/ProfileOverrideScreen.kt
++++ b/app/src/main/java/io/nekohasekai/sfa/compose/screen/settings/ProfileOverrideScreen.kt
+@@ -47,6 +47,7 @@ import androidx.compose.runtime.remember
+ import androidx.compose.runtime.rememberCoroutineScope
+ import androidx.compose.runtime.setValue
+ import androidx.compose.ui.Modifier
++import androidx.compose.ui.draw.alpha
+ import androidx.compose.ui.draw.clip
+ import androidx.compose.ui.graphics.Color
+ import androidx.compose.ui.platform.LocalContext
+@@ -58,6 +59,7 @@ import androidx.lifecycle.LifecycleEventObserver
+ import androidx.navigation.NavController
+ import io.nekohasekai.sfa.R
+ import io.nekohasekai.sfa.bg.RootClient
++import io.nekohasekai.sfa.compose.base.LocalVpnLockdown
+ import io.nekohasekai.sfa.compose.base.UiEvent
+ import io.nekohasekai.sfa.compose.base.rememberApplyServiceChangeNotifier
+ import io.nekohasekai.sfa.compose.screen.profileoverride.PerAppProxyScanner
+@@ -95,8 +97,10 @@ fun ProfileOverrideScreen(
+ 
+     var autoRedirect by remember { mutableStateOf(Settings.autoRedirect) }
+     var perAppProxyEnabled by remember { mutableStateOf(Settings.perAppProxyEnabled) }
++    val lockdown = LocalVpnLockdown.current
+     var managedModeEnabled by remember { mutableStateOf(Settings.perAppProxyManagedMode) }
+     var isScanning by remember { mutableStateOf(false) }
++    val perAppProxyEditable = !isScanning && lockdown == false
+     val notifyApplyChange = rememberApplyServiceChangeNotifier(serviceStatus)
+ 
+     fun scanAndSaveManagedList(shouldNotify: Boolean = false) {
+@@ -280,7 +284,7 @@ fun ProfileOverrideScreen(
+         }
+ 
+         // Section: Per-App Proxy
+-        val canUsePerAppProxy = if (showModeSelector) {
++        val canUsePerAppProxy = lockdown == false && if (showModeSelector) {
+             if (useRootMode) true else isShizukuAvailable
+         } else {
+             true
+@@ -306,54 +310,37 @@ fun ProfileOverrideScreen(
+             Column {
+                 // Mode selector (only when privileged query is needed)
+                 if (showModeSelector) {
+-                    val modeEnabled = !perAppProxyEnabled
+-                    val disabledAlpha = 0.38f
++                    val modeEnabled = !perAppProxyEnabled && lockdown == false
+                     ListItem(
+                         headlineContent = {
+                             Text(
+                                 stringResource(R.string.per_app_proxy_package_query_mode),
+                                 style = MaterialTheme.typography.bodyLarge,
+-                                color = if (modeEnabled) {
+-                                    Color.Unspecified
+-                                } else {
+-                                    MaterialTheme.colorScheme.onSurface.copy(alpha = disabledAlpha)
+-                                },
+                             )
+                         },
+                         supportingContent = {
+                             Text(
+                                 if (useRootMode) "ROOT" else "Shizuku",
+                                 style = MaterialTheme.typography.bodyMedium,
+-                                color = if (modeEnabled) {
+-                                    MaterialTheme.colorScheme.onSurfaceVariant
+-                                } else {
+-                                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = disabledAlpha)
+-                                },
++                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                             )
+                         },
+                         leadingContent = {
+                             Icon(
+                                 imageVector = Icons.Outlined.Tune,
+                                 contentDescription = null,
+-                                tint = if (modeEnabled) {
+-                                    MaterialTheme.colorScheme.primary
+-                                } else {
+-                                    MaterialTheme.colorScheme.onSurface.copy(alpha = disabledAlpha)
+-                                },
++                                tint = MaterialTheme.colorScheme.primary,
+                             )
+                         },
+                         trailingContent = {
+                             Icon(
+                                 imageVector = Icons.AutoMirrored.Outlined.KeyboardArrowRight,
+                                 contentDescription = null,
+-                                tint = if (modeEnabled) {
+-                                    MaterialTheme.colorScheme.onSurfaceVariant
+-                                } else {
+-                                    MaterialTheme.colorScheme.onSurface.copy(alpha = disabledAlpha)
+-                                },
++                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                             )
+                         },
+                         modifier = Modifier
++                            .alpha(if (modeEnabled) 1f else 0.38f)
+                             .clip(RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp))
+                             .clickable(enabled = modeEnabled) { showModeDialog = true },
+                         colors = ListItemDefaults.colors(
+@@ -402,19 +389,21 @@ fun ProfileOverrideScreen(
+                                     }
+                                 }
+                             },
+-                            enabled = !isScanning,
++                            enabled = perAppProxyEditable,
+                         )
+                     },
+                     modifier =
+-                    Modifier.clip(
+-                        if (showModeSelector) {
+-                            RoundedCornerShape(0.dp)
+-                        } else if (perAppProxyEnabled && canUsePerAppProxy) {
+-                            RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp)
+-                        } else {
+-                            RoundedCornerShape(12.dp)
+-                        },
+-                    ),
++                    Modifier
++                        .alpha(if (perAppProxyEditable) 1f else 0.38f)
++                        .clip(
++                            if (showModeSelector) {
++                                RoundedCornerShape(0.dp)
++                            } else if (perAppProxyEnabled && canUsePerAppProxy) {
++                                RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp)
++                            } else {
++                                RoundedCornerShape(12.dp)
++                            },
++                        ),
+                     colors =
+                     ListItemDefaults.colors(
+                         containerColor = Color.Transparent,
+@@ -424,45 +413,33 @@ fun ProfileOverrideScreen(
+                 if (perAppProxyEnabled && canUsePerAppProxy) {
+                     // Manage entry
+                     val manageEnabled = !managedModeEnabled
+-                    val disabledAlpha = 0.38f
+                     ListItem(
+                         headlineContent = {
+                             Text(
+                                 stringResource(R.string.per_app_proxy_manage),
+                                 style = MaterialTheme.typography.bodyLarge,
+-                                color = if (manageEnabled) {
+-                                    Color.Unspecified
+-                                } else {
+-                                    MaterialTheme.colorScheme.onSurface.copy(alpha = disabledAlpha)
+-                                },
+                             )
+                         },
+                         leadingContent = {
+                             Icon(
+                                 imageVector = Icons.Outlined.AppShortcut,
+                                 contentDescription = null,
+-                                tint = if (manageEnabled) {
+-                                    MaterialTheme.colorScheme.primary
+-                                } else {
+-                                    MaterialTheme.colorScheme.onSurface.copy(alpha = disabledAlpha)
+-                                },
++                                tint = MaterialTheme.colorScheme.primary,
+                             )
+                         },
+                         trailingContent = {
+                             Icon(
+                                 imageVector = Icons.AutoMirrored.Outlined.KeyboardArrowRight,
+                                 contentDescription = null,
+-                                tint = if (manageEnabled) {
+-                                    MaterialTheme.colorScheme.onSurfaceVariant
+-                                } else {
+-                                    MaterialTheme.colorScheme.onSurface.copy(alpha = disabledAlpha)
+-                                },
++                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                             )
+                         },
+                         modifier =
+-                        Modifier.clickable(enabled = manageEnabled) {
+-                            navController.navigate("settings/profile_override/manage")
+-                        },
++                        Modifier
++                            .alpha(if (manageEnabled) 1f else 0.38f)
++                            .clickable(enabled = manageEnabled) {
++                                navController.navigate("settings/profile_override/manage")
++                            },
+                         colors =
+                         ListItemDefaults.colors(
+                             containerColor = Color.Transparent,
+diff --git a/app/src/main/java/io/nekohasekai/sfa/compose/screen/settings/ServiceSettingsScreen.kt b/app/src/main/java/io/nekohasekai/sfa/compose/screen/settings/ServiceSettingsScreen.kt
+index 59dd9ae..5293544 100644
+--- a/app/src/main/java/io/nekohasekai/sfa/compose/screen/settings/ServiceSettingsScreen.kt
++++ b/app/src/main/java/io/nekohasekai/sfa/compose/screen/settings/ServiceSettingsScreen.kt
+@@ -17,7 +17,6 @@ import androidx.compose.foundation.layout.height
+ import androidx.compose.foundation.layout.padding
+ import androidx.compose.foundation.rememberScrollState
+ import androidx.compose.foundation.shape.RoundedCornerShape
+-import androidx.compose.foundation.text.ClickableText
+ import androidx.compose.foundation.verticalScroll
+ import androidx.compose.material.icons.Icons
+ import androidx.compose.material.icons.automirrored.filled.ArrowBack
+@@ -44,19 +43,23 @@ import androidx.compose.runtime.rememberCoroutineScope
+ import androidx.compose.runtime.setValue
+ import androidx.compose.ui.Alignment
+ import androidx.compose.ui.Modifier
++import androidx.compose.ui.draw.alpha
+ import androidx.compose.ui.draw.clip
+ import androidx.compose.ui.graphics.Color
+ import androidx.compose.ui.platform.LocalContext
+ import androidx.compose.ui.res.stringResource
++import androidx.compose.ui.text.LinkAnnotation
+ import androidx.compose.ui.text.SpanStyle
++import androidx.compose.ui.text.TextLinkStyles
+ import androidx.compose.ui.text.buildAnnotatedString
+ import androidx.compose.ui.text.font.FontWeight
+ import androidx.compose.ui.text.style.TextDecoration
+-import androidx.compose.ui.text.withStyle
++import androidx.compose.ui.text.withLink
+ import androidx.compose.ui.unit.dp
+ import androidx.navigation.NavController
+ import io.nekohasekai.sfa.R
+ import io.nekohasekai.sfa.bg.ServiceConnection
++import io.nekohasekai.sfa.compose.base.LocalVpnLockdown
+ import io.nekohasekai.sfa.compose.base.UiEvent
+ import io.nekohasekai.sfa.compose.base.rememberApplyServiceChangeNotifier
+ import io.nekohasekai.sfa.compose.topbar.LocalScaffoldPadding
+@@ -93,6 +96,10 @@ fun ServiceSettingsScreen(
+     val scope = rememberCoroutineScope()
+     var isBatteryOptimizationIgnored by remember { mutableStateOf(false) }
+     var allowBypass by remember { mutableStateOf(Settings.allowBypass) }
++    var splitDefaultRoute by remember { mutableStateOf(Settings.lockdownSplitDefaultRoute) }
++    val lockdown = LocalVpnLockdown.current
++    val bypassEnabled = lockdown == false
++    val splitRouteEnabled = lockdown == true && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+     val notifyApplyChange = rememberApplyServiceChangeNotifier(serviceStatus)
+     val requestBatteryOptimizationLauncher =
+         rememberLauncherForActivityResult(
+@@ -218,12 +225,6 @@ fun ServiceSettingsScreen(
+                 containerColor = MaterialTheme.colorScheme.surfaceContainer,
+             ),
+         ) {
+-            val descriptionText = stringResource(R.string.allow_bypass_description)
+-            val linkText = stringResource(R.string.android_documentation)
+-            val linkColor = MaterialTheme.colorScheme.primary
+-            val textColor = MaterialTheme.colorScheme.onSurfaceVariant
+-            val textStyle = MaterialTheme.typography.bodyMedium
+-
+             ListItem(
+                 headlineContent = {
+                     Text(
+@@ -232,40 +233,16 @@ fun ServiceSettingsScreen(
+                     )
+                 },
+                 supportingContent = {
+-                    val annotatedString = buildAnnotatedString {
+-                        withStyle(SpanStyle(color = textColor)) {
+-                            append(descriptionText)
+-                        }
+-                        append("\n\n")
+-                        pushStringAnnotation(tag = "URL", annotation = ALLOW_BYPASS_DOC_URL)
+-                        withStyle(
+-                            SpanStyle(
+-                                color = linkColor,
+-                                textDecoration = TextDecoration.Underline,
+-                            ),
+-                        ) {
+-                            append(linkText)
+-                        }
+-                        pop()
+-                    }
+-                    ClickableText(
+-                        text = annotatedString,
+-                        style = textStyle,
+-                        modifier = Modifier.padding(top = 4.dp),
+-                        onClick = { offset ->
+-                            annotatedString.getStringAnnotations(
+-                                tag = "URL",
+-                                start = offset,
+-                                end = offset,
+-                            ).firstOrNull()?.let {
+-                                context.launchCustomTab(it.item)
+-                            }
+-                        },
++                    VpnOptionDescription(
++                        description = stringResource(R.string.allow_bypass_description),
++                        linkLabel = stringResource(R.string.android_documentation),
++                        url = ALLOW_BYPASS_DOC_URL,
+                     )
+                 },
+                 trailingContent = {
+                     Switch(
+                         checked = allowBypass,
++                        enabled = bypassEnabled,
+                         onCheckedChange = { checked ->
+                             allowBypass = checked
+                             scope.launch(Dispatchers.IO) {
+@@ -277,7 +254,47 @@ fun ServiceSettingsScreen(
+                         },
+                     )
+                 },
+-                modifier = Modifier.clip(RoundedCornerShape(12.dp)),
++                modifier = Modifier
++                    .alpha(if (bypassEnabled) 1f else 0.38f)
++                    .clip(RoundedCornerShape(12.dp)),
++                colors =
++                ListItemDefaults.colors(
++                    containerColor = Color.Transparent,
++                ),
++            )
++
++            ListItem(
++                headlineContent = {
++                    Text(
++                        stringResource(R.string.vpn_lockdown_split_route),
++                        style = MaterialTheme.typography.bodyLarge,
++                    )
++                },
++                supportingContent = {
++                    VpnOptionDescription(
++                        description = stringResource(R.string.vpn_lockdown_split_route_description),
++                        linkLabel = stringResource(R.string.android_source_code),
++                        url = LOCAL_INCOMING_DOC_URL,
++                    )
++                },
++                trailingContent = {
++                    Switch(
++                        checked = splitDefaultRoute,
++                        enabled = splitRouteEnabled,
++                        onCheckedChange = { checked ->
++                            splitDefaultRoute = checked
++                            scope.launch(Dispatchers.IO) {
++                                Settings.lockdownSplitDefaultRoute = checked
++                                withContext(Dispatchers.Main) {
++                                    notifyApplyChange(UiEvent.ApplyServiceChange.Mode.Reload)
++                                }
++                            }
++                        },
++                    )
++                },
++                modifier = Modifier
++                    .alpha(if (splitRouteEnabled) 1f else 0.38f)
++                    .clip(RoundedCornerShape(12.dp)),
+                 colors =
+                 ListItemDefaults.colors(
+                     containerColor = Color.Transparent,
+@@ -289,5 +306,32 @@ fun ServiceSettingsScreen(
+     }
+ }
+ 
++@Composable
++private fun VpnOptionDescription(description: String, linkLabel: String, url: String) {
++    val context = LocalContext.current
++    val linkColor = MaterialTheme.colorScheme.primary
++    Text(
++        text = buildAnnotatedString {
++            append(description)
++            append("\n\n")
++            withLink(
++                LinkAnnotation.Url(
++                    url,
++                    TextLinkStyles(SpanStyle(color = linkColor, textDecoration = TextDecoration.Underline)),
++                ) { context.launchCustomTab(url) },
++            ) {
++                append(linkLabel)
++            }
++        },
++        color = MaterialTheme.colorScheme.onSurfaceVariant,
++        style = MaterialTheme.typography.bodyMedium,
++        modifier = Modifier.padding(top = 4.dp),
++    )
++}
++
+ private const val ALLOW_BYPASS_DOC_URL =
+     "https://developer.android.com/reference/android/net/VpnService.Builder#allowBypass()"
++
++private const val LOCAL_INCOMING_DOC_URL =
++    "https://android.googlesource.com/platform/packages/modules/Connectivity/+/" +
++        "0eccf35b6b1b123996ee41e4cc078cf79c35be89/service/src/com/android/server/ConnectivityService.java"
+diff --git a/app/src/main/java/io/nekohasekai/sfa/constant/Action.kt b/app/src/main/java/io/nekohasekai/sfa/constant/Action.kt
+index fc9e41e..751de27 100644
+--- a/app/src/main/java/io/nekohasekai/sfa/constant/Action.kt
++++ b/app/src/main/java/io/nekohasekai/sfa/constant/Action.kt
+@@ -2,6 +2,7 @@ package io.nekohasekai.sfa.constant
+ 
+ object Action {
+     const val SERVICE = "io.nekohasekai.sfa.SERVICE"
++    const val VPN_POLICY = "io.nekohasekai.sfa.VPN_POLICY"
+     const val SERVICE_CLOSE = "io.nekohasekai.sfa.SERVICE_CLOSE"
+     const val OPEN_URL = "io.nekohasekai.sfa.SERVICE_OPEN_URL"
+ }
+diff --git a/app/src/main/java/io/nekohasekai/sfa/constant/SettingsKey.kt b/app/src/main/java/io/nekohasekai/sfa/constant/SettingsKey.kt
+index 282cf07..c2a727d 100644
+--- a/app/src/main/java/io/nekohasekai/sfa/constant/SettingsKey.kt
++++ b/app/src/main/java/io/nekohasekai/sfa/constant/SettingsKey.kt
+@@ -21,6 +21,7 @@ object SettingsKey {
+     const val PER_APP_PROXY_PACKAGE_QUERY_MODE = "per_app_proxy_package_query_mode"
+ 
+     const val ALLOW_BYPASS = "allow_bypass"
++    const val LOCKDOWN_SPLIT_DEFAULT_ROUTE = "lockdown_split_default_route"
+     const val SYSTEM_PROXY_ENABLED = "system_proxy_enabled"
+ 
+     const val PRIVILEGE_SETTINGS_ENABLED = "hide_settings_enabled"
+diff --git a/app/src/main/java/io/nekohasekai/sfa/database/Settings.kt b/app/src/main/java/io/nekohasekai/sfa/database/Settings.kt
+index f656c5d..ef91599 100644
+--- a/app/src/main/java/io/nekohasekai/sfa/database/Settings.kt
++++ b/app/src/main/java/io/nekohasekai/sfa/database/Settings.kt
+@@ -83,6 +83,7 @@ object Settings {
+     }
+ 
+     var allowBypass by dataStore.boolean(SettingsKey.ALLOW_BYPASS) { false }
++    var lockdownSplitDefaultRoute by dataStore.boolean(SettingsKey.LOCKDOWN_SPLIT_DEFAULT_ROUTE) { false }
+     var systemProxyEnabled by dataStore.boolean(SettingsKey.SYSTEM_PROXY_ENABLED) { true }
+ 
+     var privilegeSettingsEnabled by dataStore.boolean(SettingsKey.PRIVILEGE_SETTINGS_ENABLED) { false }
+diff --git a/app/src/main/res/values-fa/strings.xml b/app/src/main/res/values-fa/strings.xml
+index 12ab20d..92dc936 100644
+--- a/app/src/main/res/values-fa/strings.xml
++++ b/app/src/main/res/values-fa/strings.xml
+@@ -650,4 +650,9 @@
+     <string name="taildrop_dismiss">بستن</string>
+     <string name="taildrop_open_app">باز کردن sing-box</string>
+     <string name="taildrop_notification_title">در حال ارسال فایل‌ها</string>
++    <string name="vpn_lockdown_title">حالت قفل VPN</string>
++    <string name="vpn_lockdown_description">حالت قفل VPN فعال است. سیستم اتصال‌های خارج از VPN را مسدود می‌کند.</string>
++    <string name="vpn_lockdown_split_route">اجازه اتصال‌های ورودی محلی</string>
++    <string name="vpn_lockdown_split_route_description">با فعال‌سازی، مسیر پیش‌فرض IPv4 تغییر می‌کند تا محدودیت جداسازی رابط‌های ورودی VPN کاهش یابد.</string>
++    <string name="android_source_code">کد منبع AOSP</string>
+ </resources>
+diff --git a/app/src/main/res/values-ru-rRU/strings.xml b/app/src/main/res/values-ru-rRU/strings.xml
+index d458f61..fb3b5df 100644
+--- a/app/src/main/res/values-ru-rRU/strings.xml
++++ b/app/src/main/res/values-ru-rRU/strings.xml
+@@ -658,4 +658,9 @@
+     <string name="taildrop_dismiss">Закрыть</string>
+     <string name="taildrop_open_app">Открыть sing-box</string>
+     <string name="taildrop_notification_title">Отправка файлов</string>
++    <string name="vpn_lockdown_title">Режим блокировки VPN</string>
++    <string name="vpn_lockdown_description">Режим блокировки VPN включён. Система блокирует подключения вне VPN.</string>
++    <string name="vpn_lockdown_split_route">Разрешить локальные входящие подключения</string>
++    <string name="vpn_lockdown_split_route_description">Если включено, маршрут IPv4 по умолчанию изменяется, ослабляя изоляцию входящих подключений VPN по сетевому интерфейсу.</string>
++    <string name="android_source_code">Исходный код AOSP</string>
+ </resources>
+diff --git a/app/src/main/res/values-zh-rCN/strings.xml b/app/src/main/res/values-zh-rCN/strings.xml
+index c9a946e..b42f3ae 100644
+--- a/app/src/main/res/values-zh-rCN/strings.xml
++++ b/app/src/main/res/values-zh-rCN/strings.xml
+@@ -652,4 +652,9 @@
+     <string name="taildrop_dismiss">关闭</string>
+     <string name="taildrop_open_app">打开 sing-box</string>
+     <string name="taildrop_notification_title">正在发送文件</string>
++    <string name="vpn_lockdown_title">VPN 锁定模式</string>
++    <string name="vpn_lockdown_description">VPN 锁定模式已开启，系统会阻止不经过 VPN 的连接。</string>
++    <string name="vpn_lockdown_split_route">允许本地入站连接</string>
++    <string name="vpn_lockdown_split_route_description">启用后，通过调整 IPv4 默认路由，放宽 VPN 入站接口隔离限制。</string>
++    <string name="android_source_code">AOSP 源码</string>
+ </resources>
+diff --git a/app/src/main/res/values-zh-rTW/strings.xml b/app/src/main/res/values-zh-rTW/strings.xml
+index 4c253ac..b90cca4 100644
+--- a/app/src/main/res/values-zh-rTW/strings.xml
++++ b/app/src/main/res/values-zh-rTW/strings.xml
+@@ -655,4 +655,9 @@
+     <string name="taildrop_dismiss">關閉</string>
+     <string name="taildrop_open_app">開啟 sing-box</string>
+     <string name="taildrop_notification_title">正在傳送檔案</string>
++    <string name="vpn_lockdown_title">VPN 鎖定模式</string>
++    <string name="vpn_lockdown_description">VPN 鎖定模式已啟用，系統會封鎖不經過 VPN 的連線。</string>
++    <string name="vpn_lockdown_split_route">允許本機入站連線</string>
++    <string name="vpn_lockdown_split_route_description">啟用後，透過調整 IPv4 預設路由，放寬 VPN 入站介面隔離限制。</string>
++    <string name="android_source_code">AOSP 原始碼</string>
+ </resources>
+diff --git a/app/src/main/res/values/strings.xml b/app/src/main/res/values/strings.xml
+index 5f0678c..a329631 100644
+--- a/app/src/main/res/values/strings.xml
++++ b/app/src/main/res/values/strings.xml
+@@ -723,4 +723,9 @@
+     <string name="endpoint_browser_navigation_failed">Browser navigation failed: %1$s</string>
+     <string name="endpoint_browser_too_many_windows">The authentication page opened too many browser windows.</string>
+     <string name="endpoint_browser_profile_unavailable">Browser authentication is unavailable on this device.</string>
++    <string name="vpn_lockdown_title">VPN Lockdown</string>
++    <string name="vpn_lockdown_description">VPN Lockdown is enabled. The system blocks connections outside the VPN.</string>
++    <string name="vpn_lockdown_split_route">Allow local incoming connections</string>
++    <string name="vpn_lockdown_split_route_description">When enabled, adjust the IPv4 default route to relax VPN incoming-interface isolation.</string>
++    <string name="android_source_code">AOSP Source</string>
+ </resources>
+-- 
+2.56.0
+

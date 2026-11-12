@@ -1,23 +1,21 @@
-From 944d00f4432c2dce42ebc3a196db2187b51c6b5d Mon Sep 17 00:00:00 2001
+From 06fb8c74a45c2df2061ab72470bc014d5c0da846 Mon Sep 17 00:00:00 2001
 From: Fxzx micah <48860358+fxzxmicah@users.noreply.github.com>
 Date: Wed, 2 Sep 2026 03:07:50 +0800
-Subject: [PATCH 2/2] build: align Android features with libbox tags
+Subject: [PATCH] build: align Android features with libbox tags
 
 ---
  app/build.gradle.kts                          |  31 +-
- .../sfa/vendor/GitHubUpdateChecker.kt         |  19 +-
- .../io/nekohasekai/sfa/vendor/UpdateWorker.kt |  11 +-
  .../screen/dashboard/ClashModeFeature.kt}     |  25 +-
- .../sfa/compose/feature/OpenConnectFeature.kt |  43 ++
+ .../sfa/compose/feature/OpenConnectFeature.kt |  63 ++++
  .../screen/tools/OpenConnectBrowserDialog.kt  |   0
  .../screen/tools/OpenConnectEndpointScreen.kt |   0
  .../tools/OpenConnectStatusViewModel.kt       |   0
- .../sfa/compose/feature/OpenVPNFeature.kt     |  43 ++
+ .../sfa/compose/feature/OpenVPNFeature.kt     |  63 ++++
  .../screen/tools/OpenVPNEndpointScreen.kt     |   0
  .../screen/tools/OpenVPNStatusViewModel.kt    |   0
  .../nekohasekai/sfa/bg/TaildropSendService.kt |   0
  .../nekohasekai/sfa/compose/ShareActivity.kt  |   0
- .../sfa/compose/feature/TailscaleFeature.kt   | 143 ++++++
+ .../sfa/compose/feature/TailscaleFeature.kt   | 342 ++++++++++++++++++
  .../settings/TailscaleFontPickerScreen.kt     |   0
  .../TailscaleGhosttyConfigEditorScreen.kt     |   0
  .../settings/TailscaleTerminalConfigScreen.kt |   0
@@ -41,7 +39,7 @@ Subject: [PATCH 2/2] build: align Android features with libbox tags
  .../sfa/terminal/TerminalNotifier.kt          |   0
  .../sfa/terminal/TerminalSessionManager.kt    |   0
  .../io/nekohasekai/sfa/bg/USBIPService.kt     |   0
- .../sfa/compose/feature/USBIPFeature.kt       |  61 +++
+ .../sfa/compose/feature/USBIPFeature.kt       |  85 +++++
  .../screen/usbip/USBIPDeviceDetailScreen.kt   |   0
  .../compose/screen/usbip/USBIPServerScreen.kt |   0
  .../screen/usbip/USBIPStatusViewModel.kt      |   0
@@ -54,28 +52,20 @@ Subject: [PATCH 2/2] build: align Android features with libbox tags
  .../screen/dashboard/ClashModeFeature.kt      |  20 +
  .../sfa/compose/feature/OpenConnectFeature.kt |   6 +
  .../sfa/compose/feature/OpenVPNFeature.kt     |   6 +
- .../sfa/compose/feature/TailscaleFeature.kt   |   8 +
+ .../sfa/compose/feature/TailscaleFeature.kt   |  11 +
  .../sfa/compose/feature/USBIPFeature.kt       |   6 +
  app/src/main/AndroidManifest.xml              |  12 +-
- .../java/io/nekohasekai/sfa/Application.kt    |   4 +-
- .../nekohasekai/sfa/compose/MainActivity.kt   |  64 +--
- .../sfa/compose/feature/AppFeature.kt         |  81 +++
- .../sfa/compose/navigation/Navigation.kt      | 254 +---------
+ .../java/io/nekohasekai/sfa/Application.kt    |   8 +-
+ .../nekohasekai/sfa/compose/MainActivity.kt   |  97 +----
+ .../sfa/compose/component/ListItemShape.kt    |  11 +
+ .../sfa/compose/feature/AppFeature.kt         |  82 +++++
+ .../sfa/compose/navigation/Navigation.kt      | 251 +------------
  .../screen/dashboard/DashboardCardRenderer.kt |   9 +-
  .../dashboard/DashboardSettingsBottomSheet.kt |  29 +-
- .../screen/dashboard/DashboardViewModel.kt    |  71 ++-
- .../screen/settings/AppSettingsScreen.kt      | 326 +-----------
- .../screen/settings/FDroidMirrorScreen.kt     | 462 ------------------
- .../sfa/compose/screen/tools/ToolsScreen.kt   | 293 +----------
- .../nekohasekai/sfa/constant/SettingsKey.kt   |   4 -
- .../io/nekohasekai/sfa/database/Settings.kt   |  15 -
- .../sfa/update/FDroidUpdateChecker.kt         |  27 -
- .../io/nekohasekai/sfa/update/UpdateSource.kt |  14 -
- .../io/nekohasekai/sfa/update/UpdateTrack.kt  |  14 -
- .../nekohasekai/sfa/vendor/VendorInterface.kt |   3 -
- .../java/io/nekohasekai/sfa/vendor/Vendor.kt  |  33 +-
- .../java/io/nekohasekai/sfa/vendor/Vendor.kt  |   9 +-
- 71 files changed, 581 insertions(+), 1599 deletions(-)
+ .../screen/dashboard/DashboardViewModel.kt    |  75 ++--
+ .../screen/settings/AppSettingsScreen.kt      |  53 +--
+ .../sfa/compose/screen/tools/ToolsScreen.kt   | 306 +---------------
+ 61 files changed, 860 insertions(+), 765 deletions(-)
  rename app/src/{main/java/io/nekohasekai/sfa/compose/screen/dashboard/ClashModeCard.kt => libbox/with/clashapi/io/nekohasekai/sfa/compose/screen/dashboard/ClashModeFeature.kt} (88%)
  create mode 100644 app/src/libbox/with/openconnect/io/nekohasekai/sfa/compose/feature/OpenConnectFeature.kt
  rename app/src/{main/java => libbox/with/openconnect}/io/nekohasekai/sfa/compose/screen/tools/OpenConnectBrowserDialog.kt (100%)
@@ -125,11 +115,8 @@ Subject: [PATCH 2/2] build: align Android features with libbox tags
  create mode 100644 app/src/libbox/without/openvpn/io/nekohasekai/sfa/compose/feature/OpenVPNFeature.kt
  create mode 100644 app/src/libbox/without/tailscale/io/nekohasekai/sfa/compose/feature/TailscaleFeature.kt
  create mode 100644 app/src/libbox/without/usbip/io/nekohasekai/sfa/compose/feature/USBIPFeature.kt
+ create mode 100644 app/src/main/java/io/nekohasekai/sfa/compose/component/ListItemShape.kt
  create mode 100644 app/src/main/java/io/nekohasekai/sfa/compose/feature/AppFeature.kt
- delete mode 100644 app/src/main/java/io/nekohasekai/sfa/compose/screen/settings/FDroidMirrorScreen.kt
- delete mode 100644 app/src/main/java/io/nekohasekai/sfa/update/FDroidUpdateChecker.kt
- delete mode 100644 app/src/main/java/io/nekohasekai/sfa/update/UpdateSource.kt
- delete mode 100644 app/src/main/java/io/nekohasekai/sfa/update/UpdateTrack.kt
 
 diff --git a/app/build.gradle.kts b/app/build.gradle.kts
 index cbebfa1..e9f9f8f 100644
@@ -201,82 +188,6 @@ index cbebfa1..e9f9f8f 100644
  
      // Xposed API for self-hooking VPN hide module
      compileOnly("de.robv.android.xposed:api:82")
-diff --git a/app/src/github/java/io/nekohasekai/sfa/vendor/GitHubUpdateChecker.kt b/app/src/github/java/io/nekohasekai/sfa/vendor/GitHubUpdateChecker.kt
-index b2135f2..88f23f2 100644
---- a/app/src/github/java/io/nekohasekai/sfa/vendor/GitHubUpdateChecker.kt
-+++ b/app/src/github/java/io/nekohasekai/sfa/vendor/GitHubUpdateChecker.kt
-@@ -5,7 +5,6 @@ import io.nekohasekai.libbox.Libbox
- import io.nekohasekai.sfa.BuildConfig
- import io.nekohasekai.sfa.ktx.unwrap
- import io.nekohasekai.sfa.update.UpdateInfo
--import io.nekohasekai.sfa.update.UpdateTrack
- import io.nekohasekai.sfa.utils.HTTPClient
- import kotlinx.serialization.SerialName
- import kotlinx.serialization.Serializable
-@@ -25,14 +24,9 @@ class GitHubUpdateChecker : Closeable {
- 
-     private val json = Json { ignoreUnknownKeys = true }
- 
--    fun checkUpdate(track: UpdateTrack, githubToken: String): UpdateInfo? {
-+    fun checkUpdate(githubToken: String): UpdateInfo? {
-         val request = client.newRequest()
--        request.setURL(
--            when (track) {
--                UpdateTrack.STABLE -> "$RELEASES_URL/latest"
--                UpdateTrack.BETA -> "$RELEASES_URL?per_page=3"
--            },
--        )
-+        request.setURL("$RELEASES_URL/latest")
-         request.setHeader("Accept", "application/vnd.github+json")
-         val token = githubToken.trim()
-         if (token.isNotEmpty()) {
-@@ -40,13 +34,10 @@ class GitHubUpdateChecker : Closeable {
-         }
-         request.setUserAgent(HTTPClient.userAgent)
-         val content = request.execute().content.unwrap
--        val releases = when (track) {
--            UpdateTrack.STABLE -> listOf(json.decodeFromString<GitHubRelease>(content))
--            UpdateTrack.BETA -> json.decodeFromString<List<GitHubRelease>>(content)
-+        val release = json.decodeFromString<GitHubRelease>(content)
-+        if (release.draft || release.prerelease) {
-+            return null
-         }
--        val release = releases.filter { !it.draft }.reduceOrNull { best, candidate ->
--            if (Libbox.compareSemver(candidate.version, best.version)) candidate else best
--        } ?: return null
-         if (!Libbox.compareSemver(release.version, BuildConfig.VERSION_NAME)) {
-             return null
-         }
-diff --git a/app/src/github/java/io/nekohasekai/sfa/vendor/UpdateWorker.kt b/app/src/github/java/io/nekohasekai/sfa/vendor/UpdateWorker.kt
-index 059458d..d4a5ba5 100644
---- a/app/src/github/java/io/nekohasekai/sfa/vendor/UpdateWorker.kt
-+++ b/app/src/github/java/io/nekohasekai/sfa/vendor/UpdateWorker.kt
-@@ -11,10 +11,7 @@ import androidx.work.PeriodicWorkRequestBuilder
- import androidx.work.WorkManager
- import androidx.work.WorkerParameters
- import io.nekohasekai.sfa.database.Settings
--import io.nekohasekai.sfa.update.UpdateSource
- import io.nekohasekai.sfa.update.UpdateState
--import io.nekohasekai.sfa.update.UpdateTrack
--import io.nekohasekai.sfa.update.checkFDroidUpdate
- import java.util.concurrent.TimeUnit
- 
- class UpdateWorker(private val appContext: Context, params: WorkerParameters) : CoroutineWorker(appContext, params) {
-@@ -61,13 +58,7 @@ class UpdateWorker(private val appContext: Context, params: WorkerParameters) :
-         Log.d(TAG, "Checking for updates...")
- 
-         return try {
--            val updateInfo = when (UpdateSource.fromString(Settings.updateSource)) {
--                UpdateSource.FDROID -> checkFDroidUpdate(appContext)
--                UpdateSource.GITHUB -> {
--                    val track = UpdateTrack.fromString(Settings.updateTrack)
--                    GitHubUpdateChecker().use { it.checkUpdate(track, Settings.githubToken) }
--                }
--            }
-+            val updateInfo = GitHubUpdateChecker().use { it.checkUpdate(Settings.githubToken) }
- 
-             if (updateInfo == null) {
-                 Log.d(TAG, "No update available")
 diff --git a/app/src/main/java/io/nekohasekai/sfa/compose/screen/dashboard/ClashModeCard.kt b/app/src/libbox/with/clashapi/io/nekohasekai/sfa/compose/screen/dashboard/ClashModeFeature.kt
 similarity index 88%
 rename from app/src/main/java/io/nekohasekai/sfa/compose/screen/dashboard/ClashModeCard.kt
@@ -334,22 +245,28 @@ index 80d0072..df798bb 100644
      ) {
 diff --git a/app/src/libbox/with/openconnect/io/nekohasekai/sfa/compose/feature/OpenConnectFeature.kt b/app/src/libbox/with/openconnect/io/nekohasekai/sfa/compose/feature/OpenConnectFeature.kt
 new file mode 100644
-index 0000000..714b670
+index 0000000..5f9a947
 --- /dev/null
 +++ b/app/src/libbox/with/openconnect/io/nekohasekai/sfa/compose/feature/OpenConnectFeature.kt
-@@ -0,0 +1,43 @@
+@@ -0,0 +1,63 @@
 +package io.nekohasekai.sfa.compose.feature
 +
 +import android.net.Uri
 +import androidx.compose.runtime.Composable
 +import androidx.compose.runtime.collectAsState
 +import androidx.compose.runtime.getValue
++import androidx.compose.ui.res.stringResource
 +import androidx.lifecycle.viewmodel.compose.viewModel
 +import androidx.navigation.NavController
 +import androidx.navigation.NavGraphBuilder
 +import androidx.navigation.NavType
 +import androidx.navigation.compose.composable
 +import androidx.navigation.navArgument
++import io.nekohasekai.sfa.R
++import io.nekohasekai.sfa.compose.navigation.slideInFromLeft
++import io.nekohasekai.sfa.compose.navigation.slideInFromRight
++import io.nekohasekai.sfa.compose.navigation.slideOutToLeft
++import io.nekohasekai.sfa.compose.navigation.slideOutToRight
 +import io.nekohasekai.sfa.compose.screen.tools.OpenConnectEndpointScreen
 +import io.nekohasekai.sfa.compose.screen.tools.OpenConnectStatusViewModel
 +
@@ -364,13 +281,27 @@ index 0000000..714b670
 +        @Composable
 +        override fun Content(navController: NavController) = FeatureSection(
 +            navController,
-+            state.endpoints.map { FeatureEntry("OpenConnect: ${it.endpointTag}", "tools/openconnect/${Uri.encode(it.endpointTag)}") },
++            state.endpoints.map {
++                FeatureEntry(
++                    if (state.endpoints.size == 1) {
++                        stringResource(R.string.openconnect)
++                    } else {
++                        stringResource(R.string.openconnect_with_tag, it.endpointTag)
++                    },
++                    "tools/openconnect/${Uri.encode(it.endpointTag)}",
++                )
++            },
++            title = stringResource(R.string.tailscale_endpoints),
 +        )
 +
 +        override fun routes(builder: NavGraphBuilder, navController: NavController) {
 +            builder.composable(
 +                "tools/openconnect/{endpointTag}",
 +                arguments = listOf(navArgument("endpointTag") { type = NavType.StringType }),
++                enterTransition = slideInFromRight,
++                exitTransition = slideOutToLeft,
++                popEnterTransition = slideInFromLeft,
++                popExitTransition = slideOutToRight,
 +            ) { entry ->
 +                OpenConnectEndpointScreen(
 +                    navController,
@@ -395,22 +326,28 @@ rename from app/src/main/java/io/nekohasekai/sfa/compose/screen/tools/OpenConnec
 rename to app/src/libbox/with/openconnect/io/nekohasekai/sfa/compose/screen/tools/OpenConnectStatusViewModel.kt
 diff --git a/app/src/libbox/with/openvpn/io/nekohasekai/sfa/compose/feature/OpenVPNFeature.kt b/app/src/libbox/with/openvpn/io/nekohasekai/sfa/compose/feature/OpenVPNFeature.kt
 new file mode 100644
-index 0000000..8e13bdd
+index 0000000..3e916a4
 --- /dev/null
 +++ b/app/src/libbox/with/openvpn/io/nekohasekai/sfa/compose/feature/OpenVPNFeature.kt
-@@ -0,0 +1,43 @@
+@@ -0,0 +1,63 @@
 +package io.nekohasekai.sfa.compose.feature
 +
 +import android.net.Uri
 +import androidx.compose.runtime.Composable
 +import androidx.compose.runtime.collectAsState
 +import androidx.compose.runtime.getValue
++import androidx.compose.ui.res.stringResource
 +import androidx.lifecycle.viewmodel.compose.viewModel
 +import androidx.navigation.NavController
 +import androidx.navigation.NavGraphBuilder
 +import androidx.navigation.NavType
 +import androidx.navigation.compose.composable
 +import androidx.navigation.navArgument
++import io.nekohasekai.sfa.R
++import io.nekohasekai.sfa.compose.navigation.slideInFromLeft
++import io.nekohasekai.sfa.compose.navigation.slideInFromRight
++import io.nekohasekai.sfa.compose.navigation.slideOutToLeft
++import io.nekohasekai.sfa.compose.navigation.slideOutToRight
 +import io.nekohasekai.sfa.compose.screen.tools.OpenVPNEndpointScreen
 +import io.nekohasekai.sfa.compose.screen.tools.OpenVPNStatusViewModel
 +
@@ -425,13 +362,27 @@ index 0000000..8e13bdd
 +        @Composable
 +        override fun Content(navController: NavController) = FeatureSection(
 +            navController,
-+            state.endpoints.map { FeatureEntry("OpenVPN: ${it.endpointTag}", "tools/openvpn/${Uri.encode(it.endpointTag)}") },
++            state.endpoints.map {
++                FeatureEntry(
++                    if (state.endpoints.size == 1) {
++                        stringResource(R.string.openvpn)
++                    } else {
++                        stringResource(R.string.openvpn_with_tag, it.endpointTag)
++                    },
++                    "tools/openvpn/${Uri.encode(it.endpointTag)}",
++                )
++            },
++            title = stringResource(R.string.tailscale_endpoints),
 +        )
 +
 +        override fun routes(builder: NavGraphBuilder, navController: NavController) {
 +            builder.composable(
 +                "tools/openvpn/{endpointTag}",
 +                arguments = listOf(navArgument("endpointTag") { type = NavType.StringType }),
++                enterTransition = slideInFromRight,
++                exitTransition = slideOutToLeft,
++                popEnterTransition = slideInFromLeft,
++                popExitTransition = slideOutToRight,
 +            ) { entry ->
 +                OpenVPNEndpointScreen(
 +                    navController,
@@ -460,30 +411,60 @@ rename from app/src/main/java/io/nekohasekai/sfa/compose/ShareActivity.kt
 rename to app/src/libbox/with/tailscale/io/nekohasekai/sfa/compose/ShareActivity.kt
 diff --git a/app/src/libbox/with/tailscale/io/nekohasekai/sfa/compose/feature/TailscaleFeature.kt b/app/src/libbox/with/tailscale/io/nekohasekai/sfa/compose/feature/TailscaleFeature.kt
 new file mode 100644
-index 0000000..2862287
+index 0000000..833acf7
 --- /dev/null
 +++ b/app/src/libbox/with/tailscale/io/nekohasekai/sfa/compose/feature/TailscaleFeature.kt
-@@ -0,0 +1,143 @@
+@@ -0,0 +1,342 @@
 +package io.nekohasekai.sfa.compose.feature
 +
 +import android.net.Uri
++import androidx.compose.foundation.ExperimentalFoundationApi
++import androidx.compose.foundation.combinedClickable
++import androidx.compose.foundation.layout.Box
++import androidx.compose.foundation.layout.fillMaxWidth
++import androidx.compose.foundation.layout.padding
 +import androidx.compose.material.icons.Icons
++import androidx.compose.material.icons.filled.Terminal
 +import androidx.compose.material.icons.outlined.Hub
++import androidx.compose.material3.Badge
++import androidx.compose.material3.Card
++import androidx.compose.material3.CardDefaults
++import androidx.compose.material3.DropdownMenu
++import androidx.compose.material3.DropdownMenuItem
++import androidx.compose.material3.Icon
++import androidx.compose.material3.ListItem
++import androidx.compose.material3.ListItemDefaults
++import androidx.compose.material3.MaterialTheme
++import androidx.compose.material3.Text
 +import androidx.compose.runtime.Composable
 +import androidx.compose.runtime.collectAsState
 +import androidx.compose.runtime.getValue
++import androidx.compose.runtime.mutableStateOf
++import androidx.compose.runtime.remember
++import androidx.compose.runtime.setValue
++import androidx.compose.ui.Modifier
++import androidx.compose.ui.draw.clip
++import androidx.compose.ui.graphics.Color
++import androidx.compose.ui.res.stringResource
++import androidx.compose.ui.unit.dp
 +import androidx.lifecycle.viewmodel.compose.viewModel
 +import androidx.navigation.NavController
 +import androidx.navigation.NavGraphBuilder
 +import androidx.navigation.NavType
 +import androidx.navigation.compose.composable
 +import androidx.navigation.navArgument
++import io.nekohasekai.sfa.R
++import io.nekohasekai.sfa.compose.component.listItemShape
++import io.nekohasekai.sfa.compose.navigation.slideInFromLeft
++import io.nekohasekai.sfa.compose.navigation.slideInFromRight
++import io.nekohasekai.sfa.compose.navigation.slideOutToLeft
++import io.nekohasekai.sfa.compose.navigation.slideOutToRight
 +import io.nekohasekai.sfa.compose.screen.settings.TailscaleFontPickerScreen
 +import io.nekohasekai.sfa.compose.screen.settings.TailscaleGhosttyConfigEditorScreen
 +import io.nekohasekai.sfa.compose.screen.settings.TailscaleTerminalConfigScreen
 +import io.nekohasekai.sfa.compose.screen.settings.TailscaleThemePickerScreen
-+import io.nekohasekai.sfa.compose.screen.tools.TaildropInboxScreen
 +import io.nekohasekai.sfa.compose.screen.tools.TaildropFiles
++import io.nekohasekai.sfa.compose.screen.tools.TaildropInboxScreen
 +import io.nekohasekai.sfa.compose.screen.tools.TaildropSendManager
 +import io.nekohasekai.sfa.compose.screen.tools.TaildropViewModel
 +import io.nekohasekai.sfa.compose.screen.tools.TailscaleEndpointScreen
@@ -493,8 +474,18 @@ index 0000000..2862287
 +import io.nekohasekai.sfa.compose.screen.tools.TailscaleSSHSharedViewModel
 +import io.nekohasekai.sfa.compose.screen.tools.TailscaleSSHTerminalScreen
 +import io.nekohasekai.sfa.compose.screen.tools.TailscaleStatusViewModel
++import io.nekohasekai.sfa.compose.screen.tools.handleSSHNavigation
 +
 +fun cleanTailscaleCache() = TaildropFiles.cleanCache()
++
++fun taildropRoute(uri: Uri): String? {
++    if (uri.scheme != "sing-box") return null
++    val target = if (uri.isOpaque) Uri.parse("sing-box://" + uri.schemeSpecificPart) else uri
++    return target.takeIf { it.host == "taildrop" }
++        ?.getQueryParameter("endpoint")
++        ?.takeIf(String::isNotEmpty)
++        ?.let { "tools/tailscale/${Uri.encode(it)}/taildrop" }
++}
 +
 +@Composable
 +fun rememberTailscaleFeature(): AppFeature {
@@ -509,23 +500,140 @@ index 0000000..2862287
 +        override fun subscribe() = statusViewModel.subscribe()
 +        override fun cancel() = statusViewModel.cancel()
 +
++        @OptIn(ExperimentalFoundationApi::class)
 +        @Composable
-+        override fun Content(navController: NavController) = FeatureSection(
-+            navController,
-+            state.endpoints.map { FeatureEntry("Tailscale: ${it.endpointTag}", "tools/tailscale/${Uri.encode(it.endpointTag)}") },
-+            Icons.Outlined.Hub,
-+        )
++        override fun Content(navController: NavController) {
++            val endpoints = state.endpoints
++            if (endpoints.isNotEmpty()) {
++                Text(
++                    text = stringResource(R.string.tailscale_endpoints),
++                    style = MaterialTheme.typography.labelLarge,
++                    color = MaterialTheme.colorScheme.primary,
++                    modifier = Modifier.padding(horizontal = 32.dp, vertical = 8.dp),
++                )
++                Card(
++                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
++                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
++                ) {
++                    endpoints.forEachIndexed { index, endpoint ->
++                        var showSSHMenu by remember { mutableStateOf(false) }
++                        val sshPeers = remember(endpoint) {
++                            endpoint.userGroups.flatMap { it.peers }.filter { peer ->
++                                peer.online && peer.sshHostKeys.isNotEmpty() &&
++                                    peer.tailscaleIPs.isNotEmpty() && peer.id != endpoint.selfPeer?.id
++                            }
++                        }
++                        Box {
++                            ListItem(
++                                headlineContent = {
++                                    Text(
++                                        if (endpoints.size == 1) {
++                                            stringResource(R.string.tailscale)
++                                        } else {
++                                            stringResource(R.string.tailscale_with_tag, endpoint.endpointTag)
++                                        },
++                                        style = MaterialTheme.typography.bodyLarge,
++                                    )
++                                },
++                                leadingContent = {
++                                    Icon(
++                                        imageVector = Icons.Outlined.Hub,
++                                        contentDescription = null,
++                                        tint = MaterialTheme.colorScheme.primary,
++                                    )
++                                },
++                                trailingContent = {
++                                    if (sends.any { it.endpointTag == endpoint.endpointTag && it.errorMessage != null }) {
++                                        Badge(containerColor = MaterialTheme.colorScheme.error) {
++                                            Text("!")
++                                        }
++                                    } else if (endpoint.unreadFileCount > 0) {
++                                        Badge(containerColor = MaterialTheme.colorScheme.primary) {
++                                            Text("${endpoint.unreadFileCount}")
++                                        }
++                                    }
++                                },
++                                modifier = Modifier
++                                    .clip(listItemShape(index, endpoints.size))
++                                    .combinedClickable(
++                                        onClick = {
++                                            navController.navigate("tools/tailscale/${Uri.encode(endpoint.endpointTag)}")
++                                        },
++                                        onLongClick = {
++                                            if (sshPeers.isNotEmpty()) {
++                                                showSSHMenu = true
++                                            }
++                                        },
++                                    ),
++                                colors = ListItemDefaults.colors(containerColor = Color.Transparent),
++                            )
++                            DropdownMenu(
++                                expanded = showSSHMenu,
++                                onDismissRequest = { showSSHMenu = false },
++                            ) {
++                                if (sshPeers.size == 1) {
++                                    DropdownMenuItem(
++                                        text = { Text(stringResource(R.string.tailscale_ssh_connect)) },
++                                        leadingIcon = {
++                                            Icon(Icons.Default.Terminal, contentDescription = null)
++                                        },
++                                        onClick = {
++                                            showSSHMenu = false
++                                            handleSSHNavigation(
++                                                navController,
++                                                sshViewModel,
++                                                sshPeers[0],
++                                                endpoint.endpointTag,
++                                            )
++                                        },
++                                    )
++                                } else {
++                                    DropdownMenuItem(
++                                        text = { Text(stringResource(R.string.tailscale_ssh_connect)) },
++                                        leadingIcon = {
++                                            Icon(Icons.Default.Terminal, contentDescription = null)
++                                        },
++                                        enabled = false,
++                                        onClick = {},
++                                    )
++                                    sshPeers.forEach { peer ->
++                                        DropdownMenuItem(
++                                            text = { Text(peer.hostName) },
++                                            onClick = {
++                                                showSSHMenu = false
++                                                handleSSHNavigation(
++                                                    navController,
++                                                    sshViewModel,
++                                                    peer,
++                                                    endpoint.endpointTag,
++                                                )
++                                            },
++                                        )
++                                    }
++                                }
++                            }
++                        }
++                    }
++                }
++            }
++        }
 +
 +        @Composable
 +        override fun Settings(navController: NavController) = FeatureSection(
 +            navController,
-+            listOf(FeatureEntry("Tailscale terminal", "settings/tailscale/terminal_config")),
++            listOf(FeatureEntry(stringResource(R.string.tailscale_terminal_config), "settings/tailscale/terminal_config")),
++            title = stringResource(R.string.tailscale),
++            icon = Icons.Default.Terminal,
 +        )
 +
 +        override fun routes(builder: NavGraphBuilder, navController: NavController) {
 +            builder.composable(
 +                "tools/tailscale/{endpointTag}",
 +                arguments = listOf(navArgument("endpointTag") { type = NavType.StringType }),
++                enterTransition = slideInFromRight,
++                exitTransition = slideOutToLeft,
++                popEnterTransition = slideInFromLeft,
++                popExitTransition = slideOutToRight,
 +            ) { entry ->
 +                TailscaleEndpointScreen(
 +                    navController = navController,
@@ -537,6 +645,10 @@ index 0000000..2862287
 +            builder.composable(
 +                "tools/tailscale/{endpointTag}/taildrop",
 +                arguments = listOf(navArgument("endpointTag") { type = NavType.StringType }),
++                enterTransition = slideInFromRight,
++                exitTransition = slideOutToLeft,
++                popEnterTransition = slideInFromLeft,
++                popExitTransition = slideOutToRight,
 +            ) { entry ->
 +                TaildropInboxScreen(
 +                    navController = navController,
@@ -547,6 +659,10 @@ index 0000000..2862287
 +            builder.composable(
 +                "tools/tailscale/{endpointTag}/exit_node",
 +                arguments = listOf(navArgument("endpointTag") { type = NavType.StringType }),
++                enterTransition = slideInFromRight,
++                exitTransition = slideOutToLeft,
++                popEnterTransition = slideInFromLeft,
++                popExitTransition = slideOutToRight,
 +            ) { entry ->
 +                TailscaleExitNodePickerScreen(
 +                    navController = navController,
@@ -560,6 +676,10 @@ index 0000000..2862287
 +                    navArgument("endpointTag") { type = NavType.StringType },
 +                    navArgument("peerId") { type = NavType.StringType },
 +                ),
++                enterTransition = slideInFromRight,
++                exitTransition = slideOutToLeft,
++                popEnterTransition = slideInFromLeft,
++                popExitTransition = slideOutToRight,
 +            ) { entry ->
 +                TailscalePeerScreen(
 +                    navController = navController,
@@ -574,6 +694,10 @@ index 0000000..2862287
 +                    navArgument("endpointTag") { type = NavType.StringType },
 +                    navArgument("peerId") { type = NavType.StringType },
 +                ),
++                enterTransition = slideInFromRight,
++                exitTransition = slideOutToLeft,
++                popEnterTransition = slideInFromLeft,
++                popExitTransition = slideOutToRight,
 +            ) { entry ->
 +                TailscaleSSHPromptScreen(
 +                    navController = navController,
@@ -583,25 +707,51 @@ index 0000000..2862287
 +                    peerId = Uri.decode(entry.arguments?.getString("peerId") ?: return@composable),
 +                )
 +            }
-+            builder.composable("tools/tailscale/{endpointTag}/peer/{peerId}/terminal") {
++            builder.composable(
++                "tools/tailscale/{endpointTag}/peer/{peerId}/terminal",
++                enterTransition = slideInFromRight,
++                exitTransition = slideOutToLeft,
++                popEnterTransition = slideInFromLeft,
++                popExitTransition = slideOutToRight,
++            ) {
 +                TailscaleSSHTerminalScreen(navController, sshViewModel, statusViewModel)
 +            }
-+            builder.composable("settings/tailscale/terminal_config") {
++            builder.composable(
++                "settings/tailscale/terminal_config",
++                enterTransition = slideInFromRight,
++                exitTransition = slideOutToLeft,
++                popEnterTransition = slideInFromLeft,
++                popExitTransition = slideOutToRight,
++            ) {
 +                TailscaleTerminalConfigScreen(navController)
 +            }
 +            builder.composable(
 +                "settings/tailscale/theme_picker/{isDark}",
 +                arguments = listOf(navArgument("isDark") { type = NavType.StringType }),
++                enterTransition = slideInFromRight,
++                exitTransition = slideOutToLeft,
++                popEnterTransition = slideInFromLeft,
++                popExitTransition = slideOutToRight,
 +            ) { entry ->
 +                TailscaleThemePickerScreen(navController, entry.arguments?.getString("isDark") == "true")
 +            }
 +            builder.composable(
 +                "settings/tailscale/config_editor/{isDark}",
 +                arguments = listOf(navArgument("isDark") { type = NavType.StringType }),
++                enterTransition = slideInFromRight,
++                exitTransition = slideOutToLeft,
++                popEnterTransition = slideInFromLeft,
++                popExitTransition = slideOutToRight,
 +            ) { entry ->
 +                TailscaleGhosttyConfigEditorScreen(navController, entry.arguments?.getString("isDark") == "true")
 +            }
-+            builder.composable("settings/tailscale/font_picker") {
++            builder.composable(
++                "settings/tailscale/font_picker",
++                enterTransition = slideInFromRight,
++                exitTransition = slideOutToLeft,
++                popEnterTransition = slideInFromLeft,
++                popExitTransition = slideOutToRight,
++            ) {
 +                TailscaleFontPickerScreen(navController)
 +            }
 +        }
@@ -647,10 +797,10 @@ diff --git a/app/src/main/java/io/nekohasekai/sfa/compose/screen/tools/Tailscale
 similarity index 94%
 rename from app/src/main/java/io/nekohasekai/sfa/compose/screen/tools/TailscaleEndpointScreen.kt
 rename to app/src/libbox/with/tailscale/io/nekohasekai/sfa/compose/screen/tools/TailscaleEndpointScreen.kt
-index 8144190..8f1d07d 100644
+index 59fce5a..5560c74 100644
 --- a/app/src/main/java/io/nekohasekai/sfa/compose/screen/tools/TailscaleEndpointScreen.kt
 +++ b/app/src/libbox/with/tailscale/io/nekohasekai/sfa/compose/screen/tools/TailscaleEndpointScreen.kt
-@@ -68,6 +68,9 @@ import io.nekohasekai.sfa.compose.component.qr.QRCodeDialog
+@@ -69,6 +69,9 @@ import io.nekohasekai.sfa.compose.theme.LocalStatusColors
  import io.nekohasekai.sfa.compose.topbar.LocalScaffoldPadding
  import io.nekohasekai.sfa.compose.topbar.OverrideTopBar
  import io.nekohasekai.sfa.compose.util.QRCodeGenerator
@@ -660,12 +810,12 @@ index 8144190..8f1d07d 100644
  
  @OptIn(ExperimentalMaterial3Api::class)
  @Composable
-@@ -623,3 +626,34 @@ private fun stateColor(state: String): Color = when (state) {
-     "Starting" -> Color(0xFFFFEB3B)
+@@ -625,3 +628,34 @@ private fun stateColor(state: String): Color = when (state) {
+     "NeedsLogin", "NeedsMachineAuth" -> LocalStatusColors.current.bad
      else -> Color.Gray
  }
 +
-+private fun handleSSHNavigation(
++internal fun handleSSHNavigation(
 +    navController: NavController,
 +    sshSharedViewModel: TailscaleSSHSharedViewModel,
 +    peer: TailscalePeerData,
@@ -749,10 +899,10 @@ rename from app/src/main/java/io/nekohasekai/sfa/bg/USBIPService.kt
 rename to app/src/libbox/with/usbip/io/nekohasekai/sfa/bg/USBIPService.kt
 diff --git a/app/src/libbox/with/usbip/io/nekohasekai/sfa/compose/feature/USBIPFeature.kt b/app/src/libbox/with/usbip/io/nekohasekai/sfa/compose/feature/USBIPFeature.kt
 new file mode 100644
-index 0000000..4231bf8
+index 0000000..83ebc54
 --- /dev/null
 +++ b/app/src/libbox/with/usbip/io/nekohasekai/sfa/compose/feature/USBIPFeature.kt
-@@ -0,0 +1,61 @@
+@@ -0,0 +1,85 @@
 +package io.nekohasekai.sfa.compose.feature
 +
 +import android.net.Uri
@@ -761,12 +911,18 @@ index 0000000..4231bf8
 +import androidx.compose.runtime.Composable
 +import androidx.compose.runtime.collectAsState
 +import androidx.compose.runtime.getValue
++import androidx.compose.ui.res.stringResource
 +import androidx.lifecycle.viewmodel.compose.viewModel
 +import androidx.navigation.NavController
 +import androidx.navigation.NavGraphBuilder
 +import androidx.navigation.NavType
 +import androidx.navigation.compose.composable
 +import androidx.navigation.navArgument
++import io.nekohasekai.sfa.R
++import io.nekohasekai.sfa.compose.navigation.slideInFromLeft
++import io.nekohasekai.sfa.compose.navigation.slideInFromRight
++import io.nekohasekai.sfa.compose.navigation.slideOutToLeft
++import io.nekohasekai.sfa.compose.navigation.slideOutToRight
 +import io.nekohasekai.sfa.compose.screen.usbip.USBIPDeviceDetailScreen
 +import io.nekohasekai.sfa.compose.screen.usbip.USBIPServerScreen
 +import io.nekohasekai.sfa.compose.screen.usbip.USBIPStatusViewModel
@@ -782,14 +938,28 @@ index 0000000..4231bf8
 +        @Composable
 +        override fun Content(navController: NavController) = FeatureSection(
 +            navController,
-+            state.servers.map { FeatureEntry("USB/IP: ${it.serverTag}", "tools/usbip/${Uri.encode(it.serverTag)}") },
-+            Icons.Default.Usb,
++            state.servers.map {
++                FeatureEntry(
++                    if (state.servers.size == 1) {
++                        stringResource(R.string.title_usbip)
++                    } else {
++                        stringResource(R.string.usbip_with_tag, it.serverTag)
++                    },
++                    "tools/usbip/${Uri.encode(it.serverTag)}",
++                )
++            },
++            title = stringResource(R.string.title_services),
++            icon = Icons.Default.Usb,
 +        )
 +
 +        override fun routes(builder: NavGraphBuilder, navController: NavController) {
 +            builder.composable(
 +                "tools/usbip/{serverTag}",
 +                arguments = listOf(navArgument("serverTag") { type = NavType.StringType }),
++                enterTransition = slideInFromRight,
++                exitTransition = slideOutToLeft,
++                popEnterTransition = slideInFromLeft,
++                popExitTransition = slideOutToRight,
 +            ) { entry ->
 +                USBIPServerScreen(
 +                    navController,
@@ -803,6 +973,10 @@ index 0000000..4231bf8
 +                    navArgument("serverTag") { type = NavType.StringType },
 +                    navArgument("deviceKey") { type = NavType.StringType },
 +                ),
++                enterTransition = slideInFromRight,
++                exitTransition = slideOutToLeft,
++                popEnterTransition = slideInFromLeft,
++                popExitTransition = slideOutToRight,
 +            ) { entry ->
 +                USBIPDeviceDetailScreen(
 +                    navController,
@@ -902,18 +1076,21 @@ index 0000000..bce0698
 +fun rememberOpenVPNFeature(): AppFeature = EmptyFeature
 diff --git a/app/src/libbox/without/tailscale/io/nekohasekai/sfa/compose/feature/TailscaleFeature.kt b/app/src/libbox/without/tailscale/io/nekohasekai/sfa/compose/feature/TailscaleFeature.kt
 new file mode 100644
-index 0000000..1b3552f
+index 0000000..980232b
 --- /dev/null
 +++ b/app/src/libbox/without/tailscale/io/nekohasekai/sfa/compose/feature/TailscaleFeature.kt
-@@ -0,0 +1,8 @@
+@@ -0,0 +1,11 @@
 +package io.nekohasekai.sfa.compose.feature
 +
++import android.net.Uri
 +import androidx.compose.runtime.Composable
 +
 +@Composable
 +fun rememberTailscaleFeature(): AppFeature = EmptyFeature
 +
 +fun cleanTailscaleCache() {}
++
++fun taildropRoute(uri: Uri): String? = null
 diff --git a/app/src/libbox/without/usbip/io/nekohasekai/sfa/compose/feature/USBIPFeature.kt b/app/src/libbox/without/usbip/io/nekohasekai/sfa/compose/feature/USBIPFeature.kt
 new file mode 100644
 index 0000000..a38b7ca
@@ -969,7 +1146,7 @@ index 08295b0..15534a8 100644
                  android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                  android:value="taildrop" />
 diff --git a/app/src/main/java/io/nekohasekai/sfa/Application.kt b/app/src/main/java/io/nekohasekai/sfa/Application.kt
-index a02aac1..594eb0f 100644
+index a02aac1..615486f 100644
 --- a/app/src/main/java/io/nekohasekai/sfa/Application.kt
 +++ b/app/src/main/java/io/nekohasekai/sfa/Application.kt
 @@ -19,7 +19,7 @@ import io.nekohasekai.sfa.bg.CrashReportManager
@@ -981,6 +1158,23 @@ index a02aac1..594eb0f 100644
  import io.nekohasekai.sfa.constant.Bugs
  import io.nekohasekai.sfa.database.Settings
  import io.nekohasekai.sfa.utils.AppLifecycleObserver
+@@ -27,14 +27,14 @@ import io.nekohasekai.sfa.utils.HookModuleUpdateNotifier
+ import io.nekohasekai.sfa.utils.HookStatusClient
+ import io.nekohasekai.sfa.utils.PrivilegeSettingsClient
+ import io.nekohasekai.sfa.vendor.Vendor
++import java.io.File
++import java.util.Locale
+ import kotlinx.coroutines.Dispatchers
+ import kotlinx.coroutines.GlobalScope
+ import kotlinx.coroutines.launch
+ import kotlinx.coroutines.sync.Mutex
+ import kotlinx.coroutines.sync.withLock
+ import org.json.JSONObject
+-import java.io.File
+-import java.util.Locale
+ import io.nekohasekai.sfa.Application as BoxApplication
+ 
+ class Application : Application() {
 @@ -74,7 +74,7 @@ class Application : Application() {
              }
              UpdateProfileWork.reconfigureUpdater()
@@ -991,18 +1185,36 @@ index a02aac1..594eb0f 100644
  
          if (Vendor.isPerAppProxyAvailable()) {
 diff --git a/app/src/main/java/io/nekohasekai/sfa/compose/MainActivity.kt b/app/src/main/java/io/nekohasekai/sfa/compose/MainActivity.kt
-index 3999e3f..3251900 100644
+index 3999e3f..cccb542 100644
 --- a/app/src/main/java/io/nekohasekai/sfa/compose/MainActivity.kt
 +++ b/app/src/main/java/io/nekohasekai/sfa/compose/MainActivity.kt
-@@ -110,6 +110,7 @@ import io.nekohasekai.sfa.compat.isWidthAtLeastBreakpointCompat
- import io.nekohasekai.sfa.compose.base.GlobalEventBus
- import io.nekohasekai.sfa.compose.base.SelectableMessageDialog
- import io.nekohasekai.sfa.compose.base.UiEvent
-+import io.nekohasekai.sfa.compose.feature.rememberAppFeatures
- import io.nekohasekai.sfa.compose.component.RemoteStatusBar
- import io.nekohasekai.sfa.compose.component.ServiceStatusBar
+@@ -34,8 +34,6 @@ import androidx.compose.foundation.layout.height
+ import androidx.compose.foundation.layout.only
+ import androidx.compose.foundation.layout.padding
+ import androidx.compose.foundation.layout.safeDrawing
+-import androidx.compose.foundation.layout.size
+-import androidx.compose.foundation.layout.width
+ import androidx.compose.material.icons.Icons
+ import androidx.compose.material.icons.filled.LinkOff
+ import androidx.compose.material.icons.filled.PlayArrow
+@@ -45,7 +43,6 @@ import androidx.compose.material.icons.filled.UnfoldMore
+ import androidx.compose.material3.AlertDialog
+ import androidx.compose.material3.Badge
+ import androidx.compose.material3.BadgedBox
+-import androidx.compose.material3.CircularProgressIndicator
+ import androidx.compose.material3.ExperimentalMaterial3Api
+ import androidx.compose.material3.ExtendedFloatingActionButton
+ import androidx.compose.material3.FloatingActionButton
+@@ -115,6 +112,8 @@ import io.nekohasekai.sfa.compose.component.ServiceStatusBar
  import io.nekohasekai.sfa.compose.component.SnackbarHost
-@@ -129,12 +130,6 @@ import io.nekohasekai.sfa.compose.screen.dashboard.DashboardViewModel
+ import io.nekohasekai.sfa.compose.component.UpdateAvailableDialog
+ import io.nekohasekai.sfa.compose.component.UptimeText
++import io.nekohasekai.sfa.compose.feature.rememberAppFeatures
++import io.nekohasekai.sfa.compose.feature.taildropRoute
+ import io.nekohasekai.sfa.compose.model.Connection
+ import io.nekohasekai.sfa.compose.navigation.NavHost
+ import io.nekohasekai.sfa.compose.navigation.NewProfileArgs
+@@ -129,12 +128,6 @@ import io.nekohasekai.sfa.compose.screen.dashboard.DashboardViewModel
  import io.nekohasekai.sfa.compose.screen.dashboard.GroupsCard
  import io.nekohasekai.sfa.compose.screen.dashboard.groups.GroupsViewModel
  import io.nekohasekai.sfa.compose.screen.log.LogViewModel
@@ -1015,13 +1227,32 @@ index 3999e3f..3251900 100644
  import io.nekohasekai.sfa.compose.theme.Theme
  import io.nekohasekai.sfa.compose.topbar.LocalScaffoldPadding
  import io.nekohasekai.sfa.compose.topbar.LocalTopBarController
-@@ -862,49 +857,15 @@ class MainActivity :
+@@ -270,15 +263,9 @@ class MainActivity :
+             pendingNavigationRoute.value = "settings/privilege"
+         }
+         val uri = intent.data ?: return
+-        if (uri.scheme == "sing-box") {
+-            val target = if (uri.isOpaque) Uri.parse("sing-box://" + uri.schemeSpecificPart) else uri
+-            if (target.host == "taildrop") {
+-                val endpointTag = target.getQueryParameter("endpoint")
+-                if (!endpointTag.isNullOrEmpty()) {
+-                    pendingNavigationRoute.value = "tools/tailscale/${Uri.encode(endpointTag)}/taildrop"
+-                }
+-                return
+-            }
++        taildropRoute(uri)?.let { route ->
++            pendingNavigationRoute.value = route
++            return
+         }
+         if (intent.action == Action.OPEN_URL) {
+             launchCustomTab(uri.toString())
+@@ -862,66 +849,15 @@ class MainActivity :
                  null
              }
  
 -        val tailscaleSSHSharedViewModel: TailscaleSSHSharedViewModel = viewModel()
 -
-         val isToolsRoute = currentRootRoute == Screen.Tools.route
+-        val isToolsRoute = currentRootRoute == Screen.Tools.route
 -
 -        val tailscaleStatusViewModel: TailscaleStatusViewModel = viewModel()
 -        val tailscaleState by tailscaleStatusViewModel.uiState.collectAsState()
@@ -1052,34 +1283,42 @@ index 3999e3f..3251900 100644
 +        val features = rememberAppFeatures()
  
          val statusTargetActive = remoteServer != null || currentServiceStatus == Status.Started
-         val subscribeStatus = {
+-        val subscribeStatus = {
 -            tailscaleStatusViewModel.subscribe()
 -            usbIPStatusViewModel?.subscribe()
 -            openConnectStatusViewModel?.subscribe()
 -            openVPNStatusViewModel?.subscribe()
-+            features.forEach { it.subscribe() }
-         }
-         val cancelStatus = {
+-        }
+-        val cancelStatus = {
 -            tailscaleStatusViewModel.cancel()
 -            usbIPStatusViewModel?.cancel()
 -            openConnectStatusViewModel?.cancel()
 -            openVPNStatusViewModel?.cancel()
-+            features.forEach { it.cancel() }
-         }
-         LaunchedEffect(remoteServer?.id) {
-             cancelStatus()
-@@ -914,9 +875,7 @@ class MainActivity :
-         }
-         LaunchedEffect(
-             statusTargetActive,
+-        }
+-        LaunchedEffect(remoteServer?.id) {
+-            cancelStatus()
++        DisposableEffect(remoteServer?.id, statusTargetActive) {
+             if (statusTargetActive) {
+-                subscribeStatus()
++                features.forEach { it.subscribe() }
+             }
+-        }
+-        LaunchedEffect(
+-            statusTargetActive,
 -            usbIPStatusViewModel,
 -            openConnectStatusViewModel,
 -            openVPNStatusViewModel,
-+            isToolsRoute,
-         ) {
-             if (statusTargetActive) {
-                 subscribeStatus()
-@@ -1040,11 +999,7 @@ class MainActivity :
+-        ) {
+-            if (statusTargetActive) {
+-                subscribeStatus()
+-            } else {
+-                cancelStatus()
++            onDispose {
++                features.forEach { it.cancel() }
+             }
+         }
+         val showGroupsInNav = dashboardUiState.hasGroups
+@@ -1040,11 +976,7 @@ class MainActivity :
                          logViewModel = logViewModel,
                          groupsViewModel = groupsViewModel,
                          connectionsViewModel = connectionsViewModel,
@@ -1092,7 +1331,7 @@ index 3999e3f..3251900 100644
                          modifier = Modifier.fillMaxSize(),
                      )
                      if (!useNavigationRail) {
-@@ -1228,7 +1183,8 @@ class MainActivity :
+@@ -1228,7 +1160,8 @@ class MainActivity :
          val powerReportUnreadCount by PowerReportManager.unreadCount.collectAsState()
          // The crash/OOM report entries are hidden in remote control mode.
          val toolsUnreadCount =
@@ -1102,7 +1341,7 @@ index 3999e3f..3251900 100644
  
          LaunchedEffect(Unit) {
              withContext(Dispatchers.IO) {
-@@ -1255,7 +1211,7 @@ class MainActivity :
+@@ -1255,7 +1188,7 @@ class MainActivity :
                                              BadgedBox(badge = { Badge(containerColor = MaterialTheme.colorScheme.primary) }) {
                                                  Icon(screen.icon, contentDescription = null)
                                              }
@@ -1111,7 +1350,7 @@ index 3999e3f..3251900 100644
                                              BadgedBox(badge = { Badge(containerColor = MaterialTheme.colorScheme.error) { Text("!") } }) {
                                                  Icon(screen.icon, contentDescription = null)
                                              }
-@@ -1312,7 +1268,7 @@ class MainActivity :
+@@ -1312,7 +1245,7 @@ class MainActivity :
                                                  BadgedBox(badge = { Badge(containerColor = MaterialTheme.colorScheme.primary) }) {
                                                      Icon(screen.icon, contentDescription = null)
                                                  }
@@ -1120,19 +1359,34 @@ index 3999e3f..3251900 100644
                                                  BadgedBox(badge = { Badge(containerColor = MaterialTheme.colorScheme.error) { Text("!") } }) {
                                                      Icon(screen.icon, contentDescription = null)
                                                  }
+diff --git a/app/src/main/java/io/nekohasekai/sfa/compose/component/ListItemShape.kt b/app/src/main/java/io/nekohasekai/sfa/compose/component/ListItemShape.kt
+new file mode 100644
+index 0000000..a00d518
+--- /dev/null
++++ b/app/src/main/java/io/nekohasekai/sfa/compose/component/ListItemShape.kt
+@@ -0,0 +1,11 @@
++package io.nekohasekai.sfa.compose.component
++
++import androidx.compose.foundation.shape.RoundedCornerShape
++import androidx.compose.ui.unit.dp
++
++internal fun listItemShape(index: Int, count: Int): RoundedCornerShape = when {
++    count == 1 -> RoundedCornerShape(12.dp)
++    index == 0 -> RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp)
++    index == count - 1 -> RoundedCornerShape(bottomStart = 12.dp, bottomEnd = 12.dp)
++    else -> RoundedCornerShape(0.dp)
++}
 diff --git a/app/src/main/java/io/nekohasekai/sfa/compose/feature/AppFeature.kt b/app/src/main/java/io/nekohasekai/sfa/compose/feature/AppFeature.kt
 new file mode 100644
-index 0000000..71391e0
+index 0000000..ddbce79
 --- /dev/null
 +++ b/app/src/main/java/io/nekohasekai/sfa/compose/feature/AppFeature.kt
-@@ -0,0 +1,81 @@
+@@ -0,0 +1,82 @@
 +package io.nekohasekai.sfa.compose.feature
 +
-+import androidx.compose.runtime.Composable
 +import androidx.compose.foundation.clickable
 +import androidx.compose.foundation.layout.fillMaxWidth
 +import androidx.compose.foundation.layout.padding
-+import androidx.compose.foundation.shape.RoundedCornerShape
 +import androidx.compose.material.icons.Icons
 +import androidx.compose.material.icons.outlined.Route
 +import androidx.compose.material3.Card
@@ -1142,6 +1396,7 @@ index 0000000..71391e0
 +import androidx.compose.material3.ListItemDefaults
 +import androidx.compose.material3.MaterialTheme
 +import androidx.compose.material3.Text
++import androidx.compose.runtime.Composable
 +import androidx.compose.ui.Modifier
 +import androidx.compose.ui.draw.clip
 +import androidx.compose.ui.graphics.Color
@@ -1149,6 +1404,7 @@ index 0000000..71391e0
 +import androidx.compose.ui.unit.dp
 +import androidx.navigation.NavController
 +import androidx.navigation.NavGraphBuilder
++import io.nekohasekai.sfa.compose.component.listItemShape
 +
 +interface AppFeature {
 +    val unreadCount: Int get() = 0
@@ -1175,24 +1431,25 @@ index 0000000..71391e0
 +fun FeatureSection(
 +    navController: NavController,
 +    entries: List<FeatureEntry>,
++    title: String,
 +    icon: ImageVector = Icons.Outlined.Route,
 +) {
 +    if (entries.isEmpty()) return
++    Text(
++        text = title,
++        style = MaterialTheme.typography.labelLarge,
++        color = MaterialTheme.colorScheme.primary,
++        modifier = Modifier.padding(horizontal = 32.dp, vertical = 8.dp),
++    )
 +    Card(
 +        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
 +        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
 +    ) {
 +        entries.forEachIndexed { index, entry ->
-+            val shape = when {
-+                entries.size == 1 -> RoundedCornerShape(12.dp)
-+                index == 0 -> RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp)
-+                index == entries.lastIndex -> RoundedCornerShape(bottomStart = 12.dp, bottomEnd = 12.dp)
-+                else -> RoundedCornerShape(0.dp)
-+            }
 +            ListItem(
 +                headlineContent = { Text(entry.label, style = MaterialTheme.typography.bodyLarge) },
 +                leadingContent = { Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
-+                modifier = Modifier.clip(shape).clickable { navController.navigate(entry.route) },
++                modifier = Modifier.clip(listItemShape(index, entries.size)).clickable { navController.navigate(entry.route) },
 +                colors = ListItemDefaults.colors(containerColor = Color.Transparent),
 +            )
 +        }
@@ -1203,29 +1460,23 @@ index 0000000..71391e0
 +fun rememberAppFeatures(): List<AppFeature> =
 +    listOf(
 +        rememberTailscaleFeature(),
-+        rememberOpenVPNFeature(),
 +        rememberOpenConnectFeature(),
++        rememberOpenVPNFeature(),
 +        rememberUSBIPFeature(),
 +    )
 diff --git a/app/src/main/java/io/nekohasekai/sfa/compose/navigation/Navigation.kt b/app/src/main/java/io/nekohasekai/sfa/compose/navigation/Navigation.kt
-index 8ab1513..26a5419 100644
+index b9c84aa..d000a7d 100644
 --- a/app/src/main/java/io/nekohasekai/sfa/compose/navigation/Navigation.kt
 +++ b/app/src/main/java/io/nekohasekai/sfa/compose/navigation/Navigation.kt
-@@ -14,6 +14,7 @@ import androidx.navigation.compose.composable
+@@ -12,6 +12,7 @@ import androidx.navigation.NavHostController
+ import androidx.navigation.NavType
+ import androidx.navigation.compose.composable
  import androidx.navigation.navArgument
++import io.nekohasekai.sfa.compose.feature.AppFeature
  import io.nekohasekai.sfa.compose.screen.configuration.NewProfileScreen
  import io.nekohasekai.sfa.compose.screen.connections.ConnectionDetailsRoute
-+import io.nekohasekai.sfa.compose.feature.AppFeature
  import io.nekohasekai.sfa.compose.screen.connections.ConnectionsPage
- import io.nekohasekai.sfa.compose.screen.connections.ConnectionsViewModel
- import io.nekohasekai.sfa.compose.screen.dashboard.DashboardScreen
-@@ -29,16 +30,11 @@ import io.nekohasekai.sfa.compose.screen.profileoverride.PerAppProxyScreen
- import io.nekohasekai.sfa.compose.screen.settings.AppSettingsScreen
- import io.nekohasekai.sfa.compose.screen.settings.CoreSettingsScreen
- import io.nekohasekai.sfa.compose.screen.settings.EditRemoteServerScreen
--import io.nekohasekai.sfa.compose.screen.settings.FDroidMirrorScreen
- import io.nekohasekai.sfa.compose.screen.settings.PrivilegeSettingsScreen
- import io.nekohasekai.sfa.compose.screen.settings.ProfileOverrideScreen
+@@ -34,10 +35,6 @@ import io.nekohasekai.sfa.compose.screen.settings.ProfileOverrideScreen
  import io.nekohasekai.sfa.compose.screen.settings.RemoteControlScreen
  import io.nekohasekai.sfa.compose.screen.settings.ServiceSettingsScreen
  import io.nekohasekai.sfa.compose.screen.settings.SettingsScreen
@@ -1236,7 +1487,7 @@ index 8ab1513..26a5419 100644
  import io.nekohasekai.sfa.compose.screen.tools.CrashReportDetailScreen
  import io.nekohasekai.sfa.compose.screen.tools.CrashReportFileContentScreen
  import io.nekohasekai.sfa.compose.screen.tools.CrashReportListScreen
-@@ -48,29 +44,13 @@ import io.nekohasekai.sfa.compose.screen.tools.OOMReportDetailScreen
+@@ -47,44 +44,28 @@ import io.nekohasekai.sfa.compose.screen.tools.OOMReportDetailScreen
  import io.nekohasekai.sfa.compose.screen.tools.OOMReportFileContentScreen
  import io.nekohasekai.sfa.compose.screen.tools.OOMReportListScreen
  import io.nekohasekai.sfa.compose.screen.tools.OOMReportMetadataScreen
@@ -1265,8 +1516,27 @@ index 8ab1513..26a5419 100644
 -import io.nekohasekai.sfa.compose.screen.usbip.USBIPStatusViewModel
  import io.nekohasekai.sfa.constant.Status
  
- private val slideInFromRight: AnimatedContentTransitionScope<*>.() -> androidx.compose.animation.EnterTransition = {
-@@ -102,11 +82,7 @@ fun NavHost(
+-private val slideInFromRight: AnimatedContentTransitionScope<*>.() -> androidx.compose.animation.EnterTransition = {
++internal val slideInFromRight: AnimatedContentTransitionScope<*>.() -> androidx.compose.animation.EnterTransition = {
+     slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.Left, animationSpec = tween(300))
+ }
+ 
+-private val slideOutToRight: AnimatedContentTransitionScope<*>.() -> androidx.compose.animation.ExitTransition = {
++internal val slideOutToRight: AnimatedContentTransitionScope<*>.() -> androidx.compose.animation.ExitTransition = {
+     slideOutOfContainer(AnimatedContentTransitionScope.SlideDirection.Right, animationSpec = tween(300))
+ }
+ 
+-private val slideInFromLeft: AnimatedContentTransitionScope<*>.() -> androidx.compose.animation.EnterTransition = {
++internal val slideInFromLeft: AnimatedContentTransitionScope<*>.() -> androidx.compose.animation.EnterTransition = {
+     slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.Right, animationSpec = tween(300))
+ }
+ 
+-private val slideOutToLeft: AnimatedContentTransitionScope<*>.() -> androidx.compose.animation.ExitTransition = {
++internal val slideOutToLeft: AnimatedContentTransitionScope<*>.() -> androidx.compose.animation.ExitTransition = {
+     slideOutOfContainer(AnimatedContentTransitionScope.SlideDirection.Left, animationSpec = tween(300))
+ }
+ 
+@@ -101,11 +82,7 @@ fun NavHost(
      logViewModel: LogViewModel? = null,
      groupsViewModel: GroupsViewModel? = null,
      connectionsViewModel: ConnectionsViewModel? = null,
@@ -1279,7 +1549,7 @@ index 8ab1513..26a5419 100644
      modifier: Modifier = Modifier,
  ) {
      androidx.navigation.compose.NavHost(
-@@ -254,12 +230,7 @@ fun NavHost(
+@@ -253,12 +230,7 @@ fun NavHost(
          }
  
          composable(Screen.Tools.route) {
@@ -1293,7 +1563,7 @@ index 8ab1513..26a5419 100644
          }
  
          // Tools subscreens with slide animations
-@@ -283,36 +254,6 @@ fun NavHost(
+@@ -282,36 +254,6 @@ fun NavHost(
              STUNTestScreen(navController = navController, serviceStatus = serviceStatus)
          }
  
@@ -1330,7 +1600,7 @@ index 8ab1513..26a5419 100644
          composable(
              route = "tools/outbound_picker/{selectedOutbound}",
              arguments = listOf(navArgument("selectedOutbound") { type = NavType.StringType }),
-@@ -325,137 +266,6 @@ fun NavHost(
+@@ -324,137 +266,6 @@ fun NavHost(
              OutboundPickerScreen(navController = navController, selectedOutbound = selectedOutbound)
          }
  
@@ -1468,26 +1738,16 @@ index 8ab1513..26a5419 100644
          composable(
              route = "tools/crash_report",
              enterTransition = slideInFromRight,
-@@ -618,17 +428,7 @@ fun NavHost(
+@@ -617,7 +428,7 @@ fun NavHost(
              popEnterTransition = slideInFromLeft,
              popExitTransition = slideOutToRight,
          ) {
 -            AppSettingsScreen(navController = navController, serviceStatus = serviceStatus)
--        }
--
--        composable(
--            route = "settings/fdroid_mirror",
--            enterTransition = slideInFromRight,
--            exitTransition = slideOutToLeft,
--            popEnterTransition = slideInFromLeft,
--            popExitTransition = slideOutToRight,
--        ) {
--            FDroidMirrorScreen(navController = navController)
 +            AppSettingsScreen(navController = navController, features = features, serviceStatus = serviceStatus)
          }
  
          composable(
-@@ -723,50 +523,6 @@ fun NavHost(
+@@ -712,50 +523,6 @@ fun NavHost(
              PrivilegeSettingsManageScreen(onBack = { navController.navigateUp() }, serviceStatus = serviceStatus)
          }
  
@@ -1538,7 +1798,7 @@ index 8ab1513..26a5419 100644
          composable(
              route = "settings/privilege/logs",
              enterTransition = slideInFromRight,
-@@ -776,5 +532,7 @@ fun NavHost(
+@@ -765,5 +532,7 @@ fun NavHost(
          ) {
              HookLogScreen(onBack = { navController.navigateUp() })
          }
@@ -1628,23 +1888,33 @@ index 12ec111..90d7678 100644
                          CardGroup.Profiles -> stringResource(R.string.title_configuration)
                      },
 diff --git a/app/src/main/java/io/nekohasekai/sfa/compose/screen/dashboard/DashboardViewModel.kt b/app/src/main/java/io/nekohasekai/sfa/compose/screen/dashboard/DashboardViewModel.kt
-index 5268278..f5d9698 100644
+index 5268278..003043b 100644
 --- a/app/src/main/java/io/nekohasekai/sfa/compose/screen/dashboard/DashboardViewModel.kt
 +++ b/app/src/main/java/io/nekohasekai/sfa/compose/screen/dashboard/DashboardViewModel.kt
-@@ -47,6 +47,26 @@ enum class CardPairGroup {
+@@ -17,6 +17,9 @@ import io.nekohasekai.sfa.utils.CommandClient
+ import io.nekohasekai.sfa.utils.CommandTarget
+ import io.nekohasekai.sfa.utils.HTTPClient
+ import io.nekohasekai.sfa.utils.RemoteControlManager
++import java.io.File
++import java.util.Collections
++import java.util.Date
+ import kotlinx.coroutines.Dispatchers
+ import kotlinx.coroutines.delay
+ import kotlinx.coroutines.flow.MutableStateFlow
+@@ -28,9 +31,6 @@ import kotlinx.coroutines.launch
+ import kotlinx.coroutines.withContext
+ import org.json.JSONArray
+ import org.json.JSONException
+-import java.io.File
+-import java.util.Collections
+-import java.util.Date
+ 
+ enum class CardGroup(val pairGroup: CardPairGroup? = null) {
+     ClashMode,
+@@ -47,6 +47,18 @@ enum class CardPairGroup {
      Statistics,
  }
  
-+val availableCardGroups = setOfNotNull(
-+    ClashModeFeature.cardGroup,
-+    CardGroup.UploadTraffic,
-+    CardGroup.DownloadTraffic,
-+    CardGroup.Debug,
-+    CardGroup.Connections,
-+    CardGroup.SystemProxy,
-+    CardGroup.Profiles,
-+)
-+
 +val defaultCardOrder = listOfNotNull(
 +    CardGroup.UploadTraffic,
 +    CardGroup.DownloadTraffic,
@@ -1655,10 +1925,12 @@ index 5268278..f5d9698 100644
 +    CardGroup.Profiles,
 +)
 +
++val availableCardGroups = defaultCardOrder.toSet()
++
  data class DashboardUiState(
      val serviceStatus: Status = Status.Stopped,
      val profiles: List<Profile> = emptyList(),
-@@ -86,26 +106,8 @@ data class DashboardUiState(
+@@ -86,26 +98,8 @@ data class DashboardUiState(
      val systemProxyEnabled: Boolean = false,
      val systemProxySwitching: Boolean = false,
      // Card visibility settings
@@ -1687,7 +1959,7 @@ index 5268278..f5d9698 100644
      val showCardSettingsDialog: Boolean = false,
  ) {
      data class DeprecatedNote(val message: String, val migrationLink: String?)
-@@ -123,9 +125,9 @@ class DashboardViewModel :
+@@ -123,9 +117,9 @@ class DashboardViewModel :
      internal val commandClient =
          CommandClient(
              viewModelScope,
@@ -1699,7 +1971,7 @@ index 5268278..f5d9698 100644
                  CommandClient.ConnectionType.Groups,
              ),
              this,
-@@ -136,8 +138,7 @@ class DashboardViewModel :
+@@ -136,8 +130,7 @@ class DashboardViewModel :
          val disabledItems = loadDisabledItems()
  
          // Calculate visible items (all items minus disabled)
@@ -1709,11 +1981,13 @@ index 5268278..f5d9698 100644
  
          return DashboardUiState(
              cardOrder = savedOrder,
-@@ -706,21 +707,13 @@ class DashboardViewModel :
+@@ -705,27 +698,17 @@ class DashboardViewModel :
+ 
          updateState {
              copy(
-                 cardOrder = getDefaultItemOrder(),
+-                cardOrder = getDefaultItemOrder(),
 -                visibleCards = CardGroup.values().toSet(),
++                cardOrder = defaultCardOrder,
 +                visibleCards = availableCardGroups,
              )
          }
@@ -1729,11 +2003,16 @@ index 5268278..f5d9698 100644
 -        CardGroup.ClashMode,
 -        CardGroup.Profiles,
 -    )
-+    private fun getDefaultItemOrder() = defaultCardOrder
- 
+-
      private fun loadItemOrder(): List<CardGroup> {
          val savedOrder = Settings.dashboardItemOrder
-@@ -734,13 +727,12 @@ class DashboardViewModel :
+         if (savedOrder.isBlank()) {
+-            return getDefaultItemOrder()
++            return defaultCardOrder
+         }
+ 
+         return try {
+@@ -734,18 +717,17 @@ class DashboardViewModel :
  
              for (i in 0 until jsonArray.length()) {
                  val itemName = jsonArray.getString(i)
@@ -1749,7 +2028,13 @@ index 5268278..f5d9698 100644
  
              order.addAll(newItems)
              order
-@@ -761,15 +753,14 @@ class DashboardViewModel :
+         } catch (e: JSONException) {
+-            getDefaultItemOrder()
++            defaultCardOrder
+         }
+     }
+ 
+@@ -761,15 +743,14 @@ class DashboardViewModel :
          val savedDisabled = Settings.dashboardDisabledItems
          // Filter out Profiles from disabled items (it cannot be disabled)
          return savedDisabled.mapNotNull { stringToCardGroup(it) }
@@ -1768,26 +2053,33 @@ index 5268278..f5d9698 100644
      }
  
 diff --git a/app/src/main/java/io/nekohasekai/sfa/compose/screen/settings/AppSettingsScreen.kt b/app/src/main/java/io/nekohasekai/sfa/compose/screen/settings/AppSettingsScreen.kt
-index a5424ab..f50ac84 100644
+index d5a6491..8ad656f 100644
 --- a/app/src/main/java/io/nekohasekai/sfa/compose/screen/settings/AppSettingsScreen.kt
 +++ b/app/src/main/java/io/nekohasekai/sfa/compose/screen/settings/AppSettingsScreen.kt
-@@ -43,7 +43,6 @@ import androidx.compose.material.icons.outlined.Download
- import androidx.compose.material.icons.outlined.Info
- import androidx.compose.material.icons.outlined.Key
- import androidx.compose.material.icons.outlined.Language
--import androidx.compose.material.icons.outlined.NewReleases
- import androidx.compose.material.icons.outlined.Notifications
- import androidx.compose.material.icons.outlined.Refresh
- import androidx.compose.material.icons.outlined.Settings
-@@ -79,7 +78,6 @@ import androidx.compose.runtime.rememberCoroutineScope
- import androidx.compose.runtime.setValue
- import androidx.compose.ui.Alignment
- import androidx.compose.ui.Modifier
--import androidx.compose.ui.draw.alpha
- import androidx.compose.ui.draw.clip
- import androidx.compose.ui.graphics.Color
- import androidx.compose.ui.platform.LocalContext
-@@ -100,15 +98,13 @@ import io.nekohasekai.sfa.R
+@@ -24,7 +24,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
+ import androidx.compose.foundation.layout.height
+ import androidx.compose.foundation.layout.padding
+ import androidx.compose.foundation.layout.size
+-import androidx.compose.foundation.layout.width
+ import androidx.compose.foundation.rememberScrollState
+ import androidx.compose.foundation.shape.RoundedCornerShape
+ import androidx.compose.foundation.text.KeyboardOptions
+@@ -32,7 +31,6 @@ import androidx.compose.foundation.verticalScroll
+ import androidx.compose.material.icons.Icons
+ import androidx.compose.material.icons.automirrored.filled.ArrowBack
+ import androidx.compose.material.icons.filled.ContentCopy
+-import androidx.compose.material.icons.filled.Terminal
+ import androidx.compose.material.icons.filled.Visibility
+ import androidx.compose.material.icons.filled.VisibilityOff
+ import androidx.compose.material.icons.outlined.AdminPanelSettings
+@@ -91,13 +89,13 @@ import androidx.core.os.LocaleListCompat
+ import androidx.lifecycle.Lifecycle
+ import androidx.lifecycle.compose.LifecycleEventEffect
+ import androidx.navigation.NavController
+-import io.nekohasekai.libbox.Libbox
+ import io.nekohasekai.sfa.Application
+ import io.nekohasekai.sfa.BuildConfig
+ import io.nekohasekai.sfa.R
  import io.nekohasekai.sfa.compose.base.UiEvent
  import io.nekohasekai.sfa.compose.base.rememberApplyServiceChangeNotifier
  import io.nekohasekai.sfa.compose.component.UpdateAvailableDialog
@@ -1795,16 +2087,22 @@ index a5424ab..f50ac84 100644
  import io.nekohasekai.sfa.compose.topbar.LocalScaffoldPadding
  import io.nekohasekai.sfa.compose.topbar.OverrideTopBar
  import io.nekohasekai.sfa.constant.Status
- import io.nekohasekai.sfa.database.Settings
- import io.nekohasekai.sfa.ktx.clipboardText
--import io.nekohasekai.sfa.update.UpdateCheckException
--import io.nekohasekai.sfa.update.UpdateSource
- import io.nekohasekai.sfa.update.UpdateState
--import io.nekohasekai.sfa.update.UpdateTrack
+@@ -107,19 +105,20 @@ import io.nekohasekai.sfa.update.UpdateState
  import io.nekohasekai.sfa.utils.HookStatusClient
  import io.nekohasekai.sfa.vendor.Vendor
  import io.nekohasekai.sfa.xposed.XposedActivation
-@@ -125,6 +121,7 @@ import android.provider.Settings as AndroidSettings
++import java.io.File
++import java.util.Locale
+ import kotlinx.coroutines.Dispatchers
+ import kotlinx.coroutines.Job
+ import kotlinx.coroutines.launch
+ import kotlinx.coroutines.withContext
+ import org.xmlpull.v1.XmlPullParser
+-import java.io.File
+-import java.util.Locale
+ import android.provider.Settings as AndroidSettings
+ 
+ @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
  @Composable
  fun AppSettingsScreen(
      navController: NavController,
@@ -1812,55 +2110,7 @@ index a5424ab..f50ac84 100644
      serviceStatus: Status = Status.Stopped,
  ) {
      OverrideTopBar {
-@@ -146,10 +143,6 @@ fun AppSettingsScreen(
-     val hasUpdate by UpdateState.hasUpdate
-     val updateInfo by UpdateState.updateInfo
-     val isChecking by UpdateState.isChecking
--    var showSourceDialog by remember { mutableStateOf(false) }
--    var currentSource by remember { mutableStateOf(Settings.updateSource) }
--    var showTrackDialog by remember { mutableStateOf(false) }
--    var currentTrack by remember { mutableStateOf(Settings.updateTrack) }
-     var showGitHubTokenDialog by remember { mutableStateOf(false) }
-     var githubToken by remember { mutableStateOf(Settings.githubToken) }
-     var checkUpdateEnabled by remember { mutableStateOf(Settings.checkUpdateEnabled) }
-@@ -236,36 +229,6 @@ fun AppSettingsScreen(
-         }
-     }
- 
--    if (showSourceDialog) {
--        UpdateSourceDialog(
--            currentSource = currentSource,
--            onSourceSelected = { source ->
--                currentSource = source
--                UpdateState.clear()
--                scope.launch(Dispatchers.IO) {
--                    Settings.updateSource = source
--                }
--                showSourceDialog = false
--            },
--            onDismiss = { showSourceDialog = false },
--        )
--    }
--
--    if (showTrackDialog) {
--        UpdateTrackDialog(
--            currentTrack = currentTrack,
--            onTrackSelected = { track ->
--                currentTrack = track
--                UpdateState.clear()
--                scope.launch(Dispatchers.IO) {
--                    Settings.updateTrack = track
--                }
--                showTrackDialog = false
--            },
--            onDismiss = { showTrackDialog = false },
--        )
--    }
--
-     if (showGitHubTokenDialog) {
-         GitHubTokenDialog(
-             currentToken = githubToken,
-@@ -651,49 +614,7 @@ fun AppSettingsScreen(
+@@ -612,49 +611,7 @@ fun AppSettingsScreen(
  
          Spacer(modifier = Modifier.height(8.dp))
  
@@ -1911,763 +2161,8 @@ index a5424ab..f50ac84 100644
  
          Text(
              text = stringResource(R.string.notification_settings),
-@@ -801,25 +722,11 @@ fun AppSettingsScreen(
-             ),
-         ) {
-             Column {
--                val isFDroid = UpdateSource.fromString(currentSource) == UpdateSource.FDROID
-                 val updateItemCount =
-                     run {
--                        var count = 0
--                        if (Vendor.updateSources.size > 1) {
--                            count += 1
--                        }
--                        if (Vendor.hasCustomUpdate) {
--                            count += 1
--                        }
--                        if (Vendor.hasCustomUpdate && !isFDroid) {
--                            count += 1
--                        }
--                        if (isFDroid) {
--                            count += 1
--                        }
--                        count += 1
-+                        var count = 1
-                         if (Vendor.hasCustomUpdate) {
--                            count += 1
-+                            count += 3
-                             if (silentInstallEnabled) {
-                                 count += 1
-                                 if (silentInstallMethod == "SHIZUKU" && !isMethodAvailable) {
-@@ -830,9 +737,6 @@ fun AppSettingsScreen(
-                                 }
-                             }
-                         }
--                        if (Vendor.hasCustomUpdate) {
--                            count += 1
--                        }
-                         count
-                     }
- 
-@@ -848,76 +752,7 @@ fun AppSettingsScreen(
-                     }
-                 }
- 
--                if (Vendor.updateSources.size > 1) {
--                    ListItem(
--                        headlineContent = {
--                            Text(
--                                stringResource(R.string.update_source),
--                                style = MaterialTheme.typography.bodyLarge,
--                            )
--                        },
--                        supportingContent = {
--                            val sourceName = when (UpdateSource.fromString(currentSource)) {
--                                UpdateSource.GITHUB -> stringResource(R.string.update_source_github)
--                                UpdateSource.FDROID -> stringResource(R.string.update_source_fdroid)
--                            }
--                            Text(sourceName, style = MaterialTheme.typography.bodyMedium)
--                        },
--                        leadingContent = {
--                            Icon(
--                                imageVector = Icons.Outlined.NewReleases,
--                                contentDescription = null,
--                                tint = MaterialTheme.colorScheme.primary,
--                            )
--                        },
--                        modifier =
--                        updateItemModifier()
--                            .clickable { showSourceDialog = true },
--                        colors =
--                        ListItemDefaults.colors(
--                            containerColor = Color.Transparent,
--                        ),
--                    )
--                }
--
-                 if (Vendor.hasCustomUpdate) {
--                    ListItem(
--                        headlineContent = {
--                            Text(
--                                stringResource(R.string.update_track),
--                                style = MaterialTheme.typography.bodyLarge,
--                            )
--                        },
--                        supportingContent = {
--                            val trackName = if (isFDroid) {
--                                stringResource(R.string.update_track_stable)
--                            } else {
--                                when (UpdateTrack.fromString(currentTrack)) {
--                                    UpdateTrack.STABLE -> stringResource(R.string.update_track_stable)
--                                    UpdateTrack.BETA -> stringResource(R.string.update_track_beta)
--                                }
--                            }
--                            Text(trackName, style = MaterialTheme.typography.bodyMedium)
--                        },
--                        leadingContent = {
--                            Icon(
--                                imageVector = Icons.Outlined.NewReleases,
--                                contentDescription = null,
--                                tint = MaterialTheme.colorScheme.primary,
--                            )
--                        },
--                        modifier =
--                        updateItemModifier().let {
--                            if (isFDroid) it.alpha(0.38f) else it.clickable { showTrackDialog = true }
--                        },
--                        colors =
--                        ListItemDefaults.colors(
--                            containerColor = Color.Transparent,
--                        ),
--                    )
--                }
--
--                if (Vendor.hasCustomUpdate && !isFDroid) {
-                     ListItem(
-                         headlineContent = {
-                             Text(
-@@ -949,60 +784,6 @@ fun AppSettingsScreen(
-                     )
-                 }
- 
--                if (isFDroid) {
--                    ListItem(
--                        headlineContent = {
--                            Text(
--                                stringResource(R.string.fdroid_mirror),
--                                style = MaterialTheme.typography.bodyLarge,
--                            )
--                        },
--                        supportingContent = {
--                            val mirrorUrl = Settings.fdroidMirrorUrl
--                            val mirrorName = remember(mirrorUrl) {
--                                val iter = Libbox.getFDroidMirrors()
--                                var name: String? = null
--                                while (iter.hasNext()) {
--                                    val m = iter.next()
--                                    if (m.url == mirrorUrl) {
--                                        name = m.name
--                                        break
--                                    }
--                                }
--                                if (name == null) {
--                                    val customMirrors = Settings.fdroidCustomMirrors
--                                    for (entry in customMirrors) {
--                                        val parts = entry.split("|", limit = 2)
--                                        if (parts.size == 2 && parts[1] == mirrorUrl) {
--                                            name = parts[0]
--                                            break
--                                        }
--                                    }
--                                }
--                                name ?: mirrorUrl
--                            }
--                            Text(
--                                mirrorName,
--                                style = MaterialTheme.typography.bodyMedium,
--                            )
--                        },
--                        leadingContent = {
--                            Icon(
--                                imageVector = Icons.Outlined.Speed,
--                                contentDescription = null,
--                                tint = MaterialTheme.colorScheme.primary,
--                            )
--                        },
--                        modifier =
--                        updateItemModifier()
--                            .clickable { navController.navigate("settings/fdroid_mirror") },
--                        colors =
--                        ListItemDefaults.colors(
--                            containerColor = Color.Transparent,
--                        ),
--                    )
--                }
--
-                 ListItem(
-                     headlineContent = {
-                         Text(
-@@ -1323,9 +1104,6 @@ fun AppSettingsScreen(
-                                         } else {
-                                             showUpdateAvailableDialog = true
-                                         }
--                                    } catch (_: UpdateCheckException.TrackNotSupported) {
--                                        UpdateState.setUpdate(null)
--                                        showErrorDialog = context.getString(R.string.update_track_not_supported)
-                                     } catch (e: Exception) {
-                                         Log.e("AppSettingsScreen", "checkUpdateAsync failed", e)
-                                         UpdateState.setUpdate(null)
-@@ -1379,100 +1157,6 @@ fun AppSettingsScreen(
-     }
- }
- 
--@Composable
--private fun UpdateSourceDialog(
--    currentSource: String,
--    onSourceSelected: (String) -> Unit,
--    onDismiss: () -> Unit,
--) {
--    val sources = listOf(
--        "github" to stringResource(R.string.update_source_github),
--        "fdroid" to stringResource(R.string.update_source_fdroid),
--    )
--
--    AlertDialog(
--        onDismissRequest = onDismiss,
--        title = { Text(stringResource(R.string.update_source)) },
--        text = {
--            Column {
--                sources.forEach { (value, label) ->
--                    Row(
--                        modifier =
--                        Modifier
--                            .fillMaxWidth()
--                            .clip(RoundedCornerShape(8.dp))
--                            .clickable { onSourceSelected(value) }
--                            .padding(vertical = 8.dp),
--                        verticalAlignment = Alignment.CenterVertically,
--                    ) {
--                        RadioButton(
--                            selected = currentSource == value,
--                            onClick = { onSourceSelected(value) },
--                        )
--                        Text(
--                            text = label,
--                            style = MaterialTheme.typography.bodyLarge,
--                            modifier = Modifier.padding(start = 8.dp),
--                        )
--                    }
--                }
--            }
--        },
--        confirmButton = {
--            TextButton(onClick = onDismiss) {
--                Text(stringResource(android.R.string.cancel))
--            }
--        },
--    )
--}
--
--@Composable
--private fun UpdateTrackDialog(
--    currentTrack: String,
--    onTrackSelected: (String) -> Unit,
--    onDismiss: () -> Unit,
--) {
--    val tracks = listOf(
--        "stable" to stringResource(R.string.update_track_stable),
--        "beta" to stringResource(R.string.update_track_beta),
--    )
--
--    AlertDialog(
--        onDismissRequest = onDismiss,
--        title = { Text(stringResource(R.string.update_track)) },
--        text = {
--            Column {
--                tracks.forEach { (value, label) ->
--                    Row(
--                        modifier =
--                        Modifier
--                            .fillMaxWidth()
--                            .clip(RoundedCornerShape(8.dp))
--                            .clickable { onTrackSelected(value) }
--                            .padding(vertical = 8.dp),
--                        verticalAlignment = Alignment.CenterVertically,
--                    ) {
--                        RadioButton(
--                            selected = currentTrack == value,
--                            onClick = { onTrackSelected(value) },
--                        )
--                        Text(
--                            text = label,
--                            style = MaterialTheme.typography.bodyLarge,
--                            modifier = Modifier.padding(start = 8.dp),
--                        )
--                    }
--                }
--            }
--        },
--        confirmButton = {
--            TextButton(onClick = onDismiss) {
--                Text(stringResource(android.R.string.cancel))
--            }
--        },
--    )
--}
--
- @Composable
- private fun GitHubTokenDialog(
-     currentToken: String,
-diff --git a/app/src/main/java/io/nekohasekai/sfa/compose/screen/settings/FDroidMirrorScreen.kt b/app/src/main/java/io/nekohasekai/sfa/compose/screen/settings/FDroidMirrorScreen.kt
-deleted file mode 100644
-index cf3f34e..0000000
---- a/app/src/main/java/io/nekohasekai/sfa/compose/screen/settings/FDroidMirrorScreen.kt
-+++ /dev/null
-@@ -1,462 +0,0 @@
--package io.nekohasekai.sfa.compose.screen.settings
--
--import android.webkit.URLUtil
--import androidx.compose.foundation.background
--import androidx.compose.foundation.clickable
--import androidx.compose.foundation.layout.Arrangement
--import androidx.compose.foundation.layout.Column
--import androidx.compose.foundation.layout.Row
--import androidx.compose.foundation.layout.Spacer
--import androidx.compose.foundation.layout.fillMaxSize
--import androidx.compose.foundation.layout.fillMaxWidth
--import androidx.compose.foundation.layout.height
--import androidx.compose.foundation.layout.padding
--import androidx.compose.foundation.layout.size
--import androidx.compose.foundation.layout.width
--import androidx.compose.foundation.rememberScrollState
--import androidx.compose.foundation.shape.RoundedCornerShape
--import androidx.compose.foundation.verticalScroll
--import androidx.compose.material.icons.Icons
--import androidx.compose.material.icons.automirrored.filled.ArrowBack
--import androidx.compose.material.icons.outlined.Add
--import androidx.compose.material.icons.outlined.Delete
--import androidx.compose.material.icons.outlined.Speed
--import androidx.compose.material3.Button
--import androidx.compose.material3.Card
--import androidx.compose.material3.CardDefaults
--import androidx.compose.material3.CircularProgressIndicator
--import androidx.compose.material3.ExperimentalMaterial3Api
--import androidx.compose.material3.FilledTonalButton
--import androidx.compose.material3.Icon
--import androidx.compose.material3.IconButton
--import androidx.compose.material3.ListItem
--import androidx.compose.material3.ListItemDefaults
--import androidx.compose.material3.MaterialTheme
--import androidx.compose.material3.OutlinedTextField
--import androidx.compose.material3.RadioButton
--import androidx.compose.material3.Text
--import androidx.compose.material3.TopAppBar
--import androidx.compose.runtime.Composable
--import androidx.compose.runtime.getValue
--import androidx.compose.runtime.mutableStateMapOf
--import androidx.compose.runtime.mutableStateOf
--import androidx.compose.runtime.remember
--import androidx.compose.runtime.rememberCoroutineScope
--import androidx.compose.runtime.setValue
--import androidx.compose.ui.Alignment
--import androidx.compose.ui.Modifier
--import androidx.compose.ui.draw.clip
--import androidx.compose.ui.graphics.Color
--import androidx.compose.ui.res.stringResource
--import androidx.compose.ui.text.style.TextOverflow
--import androidx.compose.ui.unit.dp
--import androidx.navigation.NavController
--import io.nekohasekai.libbox.Libbox
--import io.nekohasekai.sfa.R
--import io.nekohasekai.sfa.compose.topbar.LocalScaffoldPadding
--import io.nekohasekai.sfa.compose.topbar.OverrideTopBar
--import io.nekohasekai.sfa.database.Settings
--import kotlinx.coroutines.Dispatchers
--import kotlinx.coroutines.async
--import kotlinx.coroutines.awaitAll
--import kotlinx.coroutines.launch
--import kotlinx.coroutines.withContext
--
--private data class MirrorEntry(
--    val url: String,
--    val name: String,
--    val country: String,
--    val isCustom: Boolean = false,
--)
--
--@OptIn(ExperimentalMaterial3Api::class)
--@Composable
--fun FDroidMirrorScreen(navController: NavController) {
--    OverrideTopBar {
--        TopAppBar(
--            title = { Text(stringResource(R.string.fdroid_mirror)) },
--            navigationIcon = {
--                IconButton(onClick = { navController.navigateUp() }) {
--                    Icon(
--                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
--                        contentDescription = stringResource(R.string.content_description_back),
--                    )
--                }
--            },
--        )
--    }
--
--    val scope = rememberCoroutineScope()
--    var selectedMirrorUrl by remember { mutableStateOf(Settings.fdroidMirrorUrl) }
--    var isTesting by remember { mutableStateOf(false) }
--    val latencyResults = remember { mutableStateMapOf<String, Int>() }
--    val latencyErrors = remember { mutableStateMapOf<String, Boolean>() }
--    var showAddForm by remember { mutableStateOf(false) }
--    var newMirrorName by remember { mutableStateOf("") }
--    var newMirrorUrl by remember { mutableStateOf("") }
--    var urlError by remember { mutableStateOf<String?>(null) }
--    val invalidUrlMessage = stringResource(R.string.fdroid_mirror_invalid_url)
--    var customMirrors by remember { mutableStateOf(Settings.fdroidCustomMirrors) }
--
--    val builtinMirrors = remember {
--        val mirrors = mutableListOf<MirrorEntry>()
--        val iter = Libbox.getFDroidMirrors()
--        while (iter.hasNext()) {
--            val m = iter.next()
--            mirrors.add(MirrorEntry(url = m.url, name = m.name, country = m.country))
--        }
--        mirrors
--    }
--
--    val parsedCustomMirrors = remember(customMirrors) {
--        customMirrors.map { entry ->
--            val parts = entry.split("|", limit = 2)
--            if (parts.size == 2) {
--                MirrorEntry(url = parts[1], name = parts[0], country = "", isCustom = true)
--            } else {
--                MirrorEntry(url = entry, name = entry, country = "", isCustom = true)
--            }
--        }
--    }
--
--    val allMirrors = builtinMirrors + parsedCustomMirrors
--
--    fun selectMirror(url: String) {
--        selectedMirrorUrl = url
--        Settings.fdroidMirrorUrl = url
--    }
--
--    fun testAllMirrors() {
--        isTesting = true
--        latencyResults.clear()
--        latencyErrors.clear()
--        scope.launch {
--            allMirrors.map { mirror ->
--                async(Dispatchers.IO) {
--                    val r = Libbox.pingFDroidMirror(mirror.url)
--                    withContext(Dispatchers.Main) {
--                        if (r.latencyMs < 0) {
--                            latencyErrors[r.url] = true
--                        } else {
--                            latencyResults[r.url] = r.latencyMs
--                        }
--                    }
--                }
--            }.awaitAll()
--            val fastest = latencyResults.minByOrNull { it.value }
--            if (fastest != null) {
--                selectMirror(fastest.key)
--            }
--            isTesting = false
--        }
--    }
--
--    val grouped = remember(builtinMirrors) {
--        builtinMirrors.groupBy { it.country }
--    }
--    val countryOrder = remember(grouped) { grouped.keys.toList() }
--
--    val scaffoldPadding = LocalScaffoldPadding.current
--
--    Column(
--        modifier = Modifier
--            .fillMaxSize()
--            .background(MaterialTheme.colorScheme.surface)
--            .verticalScroll(rememberScrollState())
--            .padding(
--                top = scaffoldPadding.calculateTopPadding() + 8.dp,
--                bottom = scaffoldPadding.calculateBottomPadding() + 8.dp,
--            ),
--    ) {
--        FilledTonalButton(
--            onClick = { testAllMirrors() },
--            enabled = !isTesting,
--            modifier = Modifier
--                .fillMaxWidth()
--                .padding(horizontal = 16.dp),
--        ) {
--            if (isTesting) {
--                CircularProgressIndicator(
--                    modifier = Modifier.size(18.dp),
--                    strokeWidth = 2.dp,
--                )
--                Spacer(modifier = Modifier.width(8.dp))
--                Text(stringResource(R.string.fdroid_mirror_testing))
--            } else {
--                Icon(
--                    imageVector = Icons.Outlined.Speed,
--                    contentDescription = null,
--                    modifier = Modifier.size(18.dp),
--                )
--                Spacer(modifier = Modifier.width(8.dp))
--                Text(stringResource(R.string.fdroid_mirror_test_all))
--            }
--        }
--
--        Spacer(modifier = Modifier.height(8.dp))
--
--        countryOrder.forEach { country ->
--            val mirrors = grouped[country] ?: return@forEach
--
--            Text(
--                text = country,
--                style = MaterialTheme.typography.labelLarge,
--                color = MaterialTheme.colorScheme.primary,
--                modifier = Modifier.padding(horizontal = 32.dp, vertical = 8.dp),
--            )
--
--            Card(
--                modifier = Modifier
--                    .fillMaxWidth()
--                    .padding(horizontal = 16.dp),
--                colors = CardDefaults.cardColors(
--                    containerColor = MaterialTheme.colorScheme.surfaceContainer,
--                ),
--            ) {
--                Column {
--                    mirrors.forEachIndexed { index, mirror ->
--                        val shape = when {
--                            mirrors.size == 1 -> RoundedCornerShape(12.dp)
--                            index == 0 -> RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp)
--                            index == mirrors.lastIndex -> RoundedCornerShape(
--                                bottomStart = 12.dp,
--                                bottomEnd = 12.dp,
--                            )
--                            else -> RoundedCornerShape(0.dp)
--                        }
--                        ListItem(
--                            headlineContent = {
--                                Text(
--                                    mirror.name,
--                                    style = MaterialTheme.typography.bodyLarge,
--                                )
--                            },
--                            leadingContent = {
--                                RadioButton(
--                                    selected = selectedMirrorUrl == mirror.url,
--                                    onClick = { selectMirror(mirror.url) },
--                                )
--                            },
--                            trailingContent = {
--                                LatencyBadge(
--                                    url = mirror.url,
--                                    latencyResults = latencyResults,
--                                    latencyErrors = latencyErrors,
--                                )
--                            },
--                            modifier = Modifier
--                                .clip(shape)
--                                .clickable { selectMirror(mirror.url) },
--                            colors = ListItemDefaults.colors(
--                                containerColor = Color.Transparent,
--                            ),
--                        )
--                    }
--                }
--            }
--
--            Spacer(modifier = Modifier.height(8.dp))
--        }
--
--        Text(
--            text = stringResource(R.string.fdroid_mirror_custom),
--            style = MaterialTheme.typography.labelLarge,
--            color = MaterialTheme.colorScheme.primary,
--            modifier = Modifier.padding(horizontal = 32.dp, vertical = 8.dp),
--        )
--
--        Card(
--            modifier = Modifier
--                .fillMaxWidth()
--                .padding(horizontal = 16.dp),
--            colors = CardDefaults.cardColors(
--                containerColor = MaterialTheme.colorScheme.surfaceContainer,
--            ),
--        ) {
--            Column {
--                parsedCustomMirrors.forEachIndexed { index, mirror ->
--                    val isLast = index == parsedCustomMirrors.lastIndex && !showAddForm
--                    val shape = when {
--                        index == 0 && isLast -> RoundedCornerShape(12.dp)
--                        index == 0 -> RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp)
--                        isLast -> RoundedCornerShape(
--                            bottomStart = 12.dp,
--                            bottomEnd = 12.dp,
--                        )
--                        else -> RoundedCornerShape(0.dp)
--                    }
--                    ListItem(
--                        headlineContent = {
--                            Text(
--                                mirror.name,
--                                style = MaterialTheme.typography.bodyLarge,
--                            )
--                        },
--                        supportingContent = {
--                            Text(
--                                mirror.url,
--                                style = MaterialTheme.typography.bodySmall,
--                                color = MaterialTheme.colorScheme.onSurfaceVariant,
--                                maxLines = 1,
--                                overflow = TextOverflow.Ellipsis,
--                            )
--                        },
--                        leadingContent = {
--                            RadioButton(
--                                selected = selectedMirrorUrl == mirror.url,
--                                onClick = { selectMirror(mirror.url) },
--                            )
--                        },
--                        trailingContent = {
--                            Row(verticalAlignment = Alignment.CenterVertically) {
--                                LatencyBadge(
--                                    url = mirror.url,
--                                    latencyResults = latencyResults,
--                                    latencyErrors = latencyErrors,
--                                )
--                                IconButton(onClick = {
--                                    val encoded = "${mirror.name}|${mirror.url}"
--                                    val newSet = customMirrors.toMutableSet()
--                                    newSet.remove(encoded)
--                                    customMirrors = newSet
--                                    Settings.fdroidCustomMirrors = newSet
--                                    if (selectedMirrorUrl == mirror.url) {
--                                        selectMirror("https://f-droid.org/repo")
--                                    }
--                                }) {
--                                    Icon(
--                                        imageVector = Icons.Outlined.Delete,
--                                        contentDescription = stringResource(R.string.fdroid_mirror_delete),
--                                        tint = MaterialTheme.colorScheme.error,
--                                    )
--                                }
--                            }
--                        },
--                        modifier = Modifier
--                            .clip(shape)
--                            .clickable { selectMirror(mirror.url) },
--                        colors = ListItemDefaults.colors(
--                            containerColor = Color.Transparent,
--                        ),
--                    )
--                }
--
--                if (showAddForm) {
--                    Column(
--                        modifier = Modifier
--                            .fillMaxWidth()
--                            .padding(16.dp),
--                        verticalArrangement = Arrangement.spacedBy(8.dp),
--                    ) {
--                        OutlinedTextField(
--                            value = newMirrorName,
--                            onValueChange = { newMirrorName = it },
--                            label = { Text(stringResource(R.string.fdroid_mirror_name_hint)) },
--                            singleLine = true,
--                            modifier = Modifier.fillMaxWidth(),
--                        )
--                        OutlinedTextField(
--                            value = newMirrorUrl,
--                            onValueChange = {
--                                newMirrorUrl = it
--                                urlError = null
--                            },
--                            label = { Text(stringResource(R.string.fdroid_mirror_url_hint)) },
--                            singleLine = true,
--                            isError = urlError != null,
--                            supportingText = urlError?.let { { Text(it) } },
--                            modifier = Modifier.fillMaxWidth(),
--                        )
--                        Row(
--                            modifier = Modifier.fillMaxWidth(),
--                            horizontalArrangement = Arrangement.End,
--                            verticalAlignment = Alignment.CenterVertically,
--                        ) {
--                            Button(onClick = {
--                                val url = newMirrorUrl.trim().trimEnd('/')
--                                if (!URLUtil.isHttpsUrl(url)) {
--                                    urlError = invalidUrlMessage
--                                    return@Button
--                                }
--                                val name = newMirrorName.trim().ifEmpty { url }
--                                val encoded = "$name|$url"
--                                val newSet = customMirrors.toMutableSet()
--                                newSet.add(encoded)
--                                customMirrors = newSet
--                                Settings.fdroidCustomMirrors = newSet
--                                newMirrorName = ""
--                                newMirrorUrl = ""
--                                urlError = null
--                                showAddForm = false
--                            }) {
--                                Text(stringResource(R.string.fdroid_mirror_add_action))
--                            }
--                        }
--                    }
--                } else {
--                    ListItem(
--                        headlineContent = {
--                            Text(
--                                stringResource(R.string.fdroid_mirror_add),
--                                style = MaterialTheme.typography.bodyLarge,
--                                color = MaterialTheme.colorScheme.primary,
--                            )
--                        },
--                        leadingContent = {
--                            Icon(
--                                imageVector = Icons.Outlined.Add,
--                                contentDescription = null,
--                                tint = MaterialTheme.colorScheme.primary,
--                            )
--                        },
--                        modifier = Modifier
--                            .clip(
--                                if (parsedCustomMirrors.isEmpty()) {
--                                    RoundedCornerShape(12.dp)
--                                } else {
--                                    RoundedCornerShape(bottomStart = 12.dp, bottomEnd = 12.dp)
--                                },
--                            )
--                            .clickable { showAddForm = true },
--                        colors = ListItemDefaults.colors(
--                            containerColor = Color.Transparent,
--                        ),
--                    )
--                }
--            }
--        }
--
--        Spacer(modifier = Modifier.height(16.dp))
--    }
--}
--
--@Composable
--private fun LatencyBadge(
--    url: String,
--    latencyResults: Map<String, Int>,
--    latencyErrors: Map<String, Boolean>,
--) {
--    val latency = latencyResults[url]
--    val failed = latencyErrors[url] == true
--    when {
--        latency != null -> {
--            Text(
--                text = stringResource(R.string.fdroid_mirror_latency, latency),
--                style = MaterialTheme.typography.labelMedium,
--                color = when {
--                    latency < 100 -> MaterialTheme.colorScheme.primary
--                    latency < 500 -> MaterialTheme.colorScheme.onSurfaceVariant
--                    else -> MaterialTheme.colorScheme.error
--                },
--            )
--        }
--        failed -> {
--            Text(
--                text = stringResource(R.string.fdroid_mirror_failed),
--                style = MaterialTheme.typography.labelMedium,
--                color = MaterialTheme.colorScheme.error,
--            )
--        }
--        else -> {}
--    }
--}
 diff --git a/app/src/main/java/io/nekohasekai/sfa/compose/screen/tools/ToolsScreen.kt b/app/src/main/java/io/nekohasekai/sfa/compose/screen/tools/ToolsScreen.kt
-index 8c26139..ba25222 100644
+index 8c26139..7750486 100644
 --- a/app/src/main/java/io/nekohasekai/sfa/compose/screen/tools/ToolsScreen.kt
 +++ b/app/src/main/java/io/nekohasekai/sfa/compose/screen/tools/ToolsScreen.kt
 @@ -1,10 +1,7 @@
@@ -2702,9 +2197,19 @@ index 8c26139..ba25222 100644
  import androidx.compose.material3.ExperimentalMaterial3Api
  import androidx.compose.material3.Icon
  import androidx.compose.material3.IconButton
-@@ -56,23 +48,16 @@ import io.nekohasekai.sfa.bg.OOMReportManager
+@@ -43,7 +35,6 @@ import androidx.compose.runtime.getValue
+ import androidx.compose.runtime.mutableStateOf
+ import androidx.compose.runtime.remember
+ import androidx.compose.runtime.setValue
+-import androidx.compose.ui.Alignment
+ import androidx.compose.ui.Modifier
+ import androidx.compose.ui.draw.clip
+ import androidx.compose.ui.graphics.Color
+@@ -55,24 +46,18 @@ import io.nekohasekai.sfa.bg.CrashReportManager
+ import io.nekohasekai.sfa.bg.OOMReportManager
  import io.nekohasekai.sfa.bg.PowerReportManager
  import io.nekohasekai.sfa.compose.component.RemoteControlMenuItems
++import io.nekohasekai.sfa.compose.component.listItemShape
  import io.nekohasekai.sfa.compose.component.rememberRemoteServers
 -import io.nekohasekai.sfa.compose.screen.usbip.USBIPStatusViewModel
 +import io.nekohasekai.sfa.compose.feature.AppFeature
@@ -2984,10 +2489,35 @@ index 8c26139..ba25222 100644
  
          Text(
              text = stringResource(R.string.title_network),
-@@ -527,34 +273,3 @@ private fun endpointRowShape(index: Int, count: Int): RoundedCornerShape = when
-     index == count - 1 -> RoundedCornerShape(bottomStart = 12.dp, bottomEnd = 12.dp)
-     else -> RoundedCornerShape(0.dp)
+@@ -484,7 +230,7 @@ fun ToolsScreen(
+                         }
+                     },
+                     modifier = Modifier
+-                        .clip(endpointRowShape(1, debugRowCount))
++                        .clip(listItemShape(1, debugRowCount))
+                         .clickable { navController.navigate("tools/oom_report") },
+                     colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                 )
+@@ -510,7 +256,7 @@ fun ToolsScreen(
+                         }
+                     },
+                     modifier = Modifier
+-                        .clip(endpointRowShape(2, debugRowCount))
++                        .clip(listItemShape(2, debugRowCount))
+                         .clickable { navController.navigate("tools/power_report") },
+                     colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                 )
+@@ -520,41 +266,3 @@ fun ToolsScreen(
  }
+ 
+ private val STATUS_BAR_CONTENT_PADDING = 74.dp
+-
+-private fun endpointRowShape(index: Int, count: Int): RoundedCornerShape = when {
+-    count == 1 -> RoundedCornerShape(12.dp)
+-    index == 0 -> RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp)
+-    index == count - 1 -> RoundedCornerShape(bottomStart = 12.dp, bottomEnd = 12.dp)
+-    else -> RoundedCornerShape(0.dp)
+-}
 -
 -internal fun handleSSHNavigation(
 -    navController: NavController,
@@ -3019,256 +2549,6 @@ index 8c26139..ba25222 100644
 -        )
 -    }
 -}
-diff --git a/app/src/main/java/io/nekohasekai/sfa/constant/SettingsKey.kt b/app/src/main/java/io/nekohasekai/sfa/constant/SettingsKey.kt
-index 836d0e5..282cf07 100644
---- a/app/src/main/java/io/nekohasekai/sfa/constant/SettingsKey.kt
-+++ b/app/src/main/java/io/nekohasekai/sfa/constant/SettingsKey.kt
-@@ -5,11 +5,7 @@ object SettingsKey {
-     const val SERVICE_MODE = "service_mode"
-     const val CHECK_UPDATE_ENABLED = "check_update_enabled"
-     const val UPDATE_CHECK_PROMPTED = "update_check_prompted"
--    const val UPDATE_SOURCE = "update_source"
--    const val UPDATE_TRACK = "update_track"
-     const val GITHUB_TOKEN = "github_token"
--    const val FDROID_MIRROR_URL = "fdroid_mirror_url"
--    const val FDROID_CUSTOM_MIRRORS = "fdroid_custom_mirrors"
-     const val SILENT_INSTALL_ENABLED = "silent_install_enabled"
-     const val SILENT_INSTALL_METHOD = "silent_install_method"
-     const val AUTO_UPDATE_ENABLED = "auto_update_enabled"
-diff --git a/app/src/main/java/io/nekohasekai/sfa/database/Settings.kt b/app/src/main/java/io/nekohasekai/sfa/database/Settings.kt
-index ea01530..8419334 100644
---- a/app/src/main/java/io/nekohasekai/sfa/database/Settings.kt
-+++ b/app/src/main/java/io/nekohasekai/sfa/database/Settings.kt
-@@ -4,7 +4,6 @@ import android.os.Build
- import androidx.room.Room
- import io.nekohasekai.libbox.Libbox
- import io.nekohasekai.sfa.Application
--import io.nekohasekai.sfa.BuildConfig
- import io.nekohasekai.sfa.bg.ProxyService
- import io.nekohasekai.sfa.bg.VPNService
- import io.nekohasekai.sfa.constant.Path
-@@ -41,20 +40,8 @@ object Settings {
-     var serviceMode by dataStore.string(SettingsKey.SERVICE_MODE) { ServiceMode.NORMAL }
-     var startedByUser by dataStore.boolean(SettingsKey.STARTED_BY_USER)
- 
--    var updateSource by dataStore.string(SettingsKey.UPDATE_SOURCE) { "github" }
-     var checkUpdateEnabled by dataStore.boolean(SettingsKey.CHECK_UPDATE_ENABLED) { false }
-     var updateCheckPrompted by dataStore.boolean(SettingsKey.UPDATE_CHECK_PROMPTED) { false }
--    var updateTrack by dataStore.string(SettingsKey.UPDATE_TRACK) {
--        val versionName = BuildConfig.VERSION_NAME.lowercase()
--        if (versionName.contains("-alpha") ||
--            versionName.contains("-beta") ||
--            versionName.contains("-rc")
--        ) {
--            "beta"
--        } else {
--            "stable"
--        }
--    }
-     var githubToken by dataStore.string(SettingsKey.GITHUB_TOKEN) { "" }
-     var silentInstallEnabled by dataStore.boolean(SettingsKey.SILENT_INSTALL_ENABLED) { false }
-     var silentInstallMethod by dataStore.string(SettingsKey.SILENT_INSTALL_METHOD) {
-@@ -64,8 +51,6 @@ object Settings {
-             "SHIZUKU"
-         }
-     }
--    var fdroidMirrorUrl by dataStore.string(SettingsKey.FDROID_MIRROR_URL) { "https://f-droid.org/repo" }
--    var fdroidCustomMirrors by dataStore.stringSet(SettingsKey.FDROID_CUSTOM_MIRRORS) { emptySet() }
-     var autoUpdateEnabled by dataStore.boolean(SettingsKey.AUTO_UPDATE_ENABLED) { false }
-     var dynamicNotification by dataStore.boolean(SettingsKey.DYNAMIC_NOTIFICATION) { true }
-     var disableDeprecatedWarnings by dataStore.boolean(SettingsKey.DISABLE_DEPRECATED_WARNINGS) { false }
-diff --git a/app/src/main/java/io/nekohasekai/sfa/update/FDroidUpdateChecker.kt b/app/src/main/java/io/nekohasekai/sfa/update/FDroidUpdateChecker.kt
-deleted file mode 100644
-index 98af76f..0000000
---- a/app/src/main/java/io/nekohasekai/sfa/update/FDroidUpdateChecker.kt
-+++ /dev/null
-@@ -1,27 +0,0 @@
--package io.nekohasekai.sfa.update
--
--import android.content.Context
--import io.nekohasekai.libbox.Libbox
--import io.nekohasekai.sfa.database.Settings
--
--fun checkFDroidUpdate(context: Context): UpdateInfo? {
--    val packageName = context.packageName
--
--    @Suppress("DEPRECATION")
--    val versionCode = context.packageManager.getPackageInfo(packageName, 0).versionCode
--    val result = Libbox.checkFDroidUpdate(
--        Settings.fdroidMirrorUrl,
--        packageName,
--        versionCode,
--        context.cacheDir.absolutePath,
--    ) ?: return null
--    return UpdateInfo(
--        versionCode = result.versionCode,
--        versionName = result.versionName,
--        downloadUrl = result.downloadURL,
--        releaseUrl = "https://f-droid.org/packages/$packageName/",
--        releaseNotes = null,
--        isPrerelease = false,
--        fileSize = result.fileSize,
--    )
--}
-diff --git a/app/src/main/java/io/nekohasekai/sfa/update/UpdateSource.kt b/app/src/main/java/io/nekohasekai/sfa/update/UpdateSource.kt
-deleted file mode 100644
-index 006ad5f..0000000
---- a/app/src/main/java/io/nekohasekai/sfa/update/UpdateSource.kt
-+++ /dev/null
-@@ -1,14 +0,0 @@
--package io.nekohasekai.sfa.update
--
--enum class UpdateSource {
--    GITHUB,
--    FDROID,
--    ;
--
--    companion object {
--        fun fromString(value: String): UpdateSource = when (value.lowercase()) {
--            "fdroid" -> FDROID
--            else -> GITHUB
--        }
--    }
--}
-diff --git a/app/src/main/java/io/nekohasekai/sfa/update/UpdateTrack.kt b/app/src/main/java/io/nekohasekai/sfa/update/UpdateTrack.kt
-deleted file mode 100644
-index d3e1c51..0000000
---- a/app/src/main/java/io/nekohasekai/sfa/update/UpdateTrack.kt
-+++ /dev/null
-@@ -1,14 +0,0 @@
--package io.nekohasekai.sfa.update
--
--enum class UpdateTrack {
--    STABLE,
--    BETA,
--    ;
--
--    companion object {
--        fun fromString(value: String): UpdateTrack = when (value.lowercase()) {
--            "beta" -> BETA
--            else -> STABLE
--        }
--    }
--}
-diff --git a/app/src/main/java/io/nekohasekai/sfa/vendor/VendorInterface.kt b/app/src/main/java/io/nekohasekai/sfa/vendor/VendorInterface.kt
-index db8fd2a..d466b9e 100644
---- a/app/src/main/java/io/nekohasekai/sfa/vendor/VendorInterface.kt
-+++ b/app/src/main/java/io/nekohasekai/sfa/vendor/VendorInterface.kt
-@@ -4,7 +4,6 @@ import android.app.Activity
- import androidx.camera.core.ImageAnalysis
- import io.nekohasekai.sfa.compose.screen.qrscan.QRCodeCropArea
- import io.nekohasekai.sfa.update.UpdateInfo
--import io.nekohasekai.sfa.update.UpdateSource
- 
- interface VendorInterface {
-     fun checkUpdate(activity: Activity, byUser: Boolean)
-@@ -19,8 +18,6 @@ interface VendorInterface {
- 
-     val hasCustomUpdate: Boolean get() = false
- 
--    val updateSources: List<UpdateSource> get() = listOf(UpdateSource.GITHUB)
--
-     fun checkUpdateAsync(): UpdateInfo? = null
- 
-     fun scheduleAutoUpdate() {}
-diff --git a/app/src/other/java/io/nekohasekai/sfa/vendor/Vendor.kt b/app/src/other/java/io/nekohasekai/sfa/vendor/Vendor.kt
-index fa39ea9..4c9c234 100644
---- a/app/src/other/java/io/nekohasekai/sfa/vendor/Vendor.kt
-+++ b/app/src/other/java/io/nekohasekai/sfa/vendor/Vendor.kt
-@@ -6,17 +6,12 @@ import android.net.Uri
- import android.util.Log
- import androidx.camera.core.ImageAnalysis
- import com.google.android.material.dialog.MaterialAlertDialogBuilder
--import io.nekohasekai.sfa.Application
- import io.nekohasekai.sfa.R
- import io.nekohasekai.sfa.bg.RootClient
- import io.nekohasekai.sfa.compose.screen.qrscan.QRCodeCropArea
- import io.nekohasekai.sfa.database.Settings
--import io.nekohasekai.sfa.update.UpdateCheckException
- import io.nekohasekai.sfa.update.UpdateInfo
--import io.nekohasekai.sfa.update.UpdateSource
- import io.nekohasekai.sfa.update.UpdateState
--import io.nekohasekai.sfa.update.UpdateTrack
--import io.nekohasekai.sfa.update.checkFDroidUpdate
- 
- object Vendor : VendorInterface {
-     private const val TAG = "Vendor"
-@@ -33,13 +28,6 @@ object Vendor : VendorInterface {
-                     showNoUpdatesDialog(activity)
-                 }
-             }
--        } catch (e: UpdateCheckException.TrackNotSupported) {
--            Log.d(TAG, "checkUpdate: track not supported")
--            if (byUser) {
--                activity.runOnUiThread {
--                    showTrackNotSupportedDialog(activity)
--                }
--            }
-         } catch (e: Exception) {
-             Log.e(TAG, "checkUpdate: ", e)
-             if (byUser) {
-@@ -81,14 +69,6 @@ object Vendor : VendorInterface {
-             .show()
-     }
- 
--    private fun showTrackNotSupportedDialog(activity: Activity) {
--        MaterialAlertDialogBuilder(activity)
--            .setTitle(R.string.check_update)
--            .setMessage(R.string.update_track_not_supported)
--            .setPositiveButton(R.string.ok, null)
--            .show()
--    }
--
-     override fun createQRCodeAnalyzer(
-         onSuccess: (String) -> Unit,
-         onFailure: (Exception) -> Unit,
-@@ -97,17 +77,8 @@ object Vendor : VendorInterface {
- 
-     override val hasCustomUpdate = true
- 
--    override val updateSources = listOf(UpdateSource.GITHUB, UpdateSource.FDROID)
--
--    override fun checkUpdateAsync(): UpdateInfo? = when (UpdateSource.fromString(Settings.updateSource)) {
--        UpdateSource.FDROID -> checkFDroidUpdate(Application.application)
--        UpdateSource.GITHUB -> {
--            val track = UpdateTrack.fromString(Settings.updateTrack)
--            GitHubUpdateChecker().use { checker ->
--                checker.checkUpdate(track, Settings.githubToken)
--            }
--        }
--    }
-+    override fun checkUpdateAsync(): UpdateInfo? =
-+        GitHubUpdateChecker().use { it.checkUpdate(Settings.githubToken) }
- 
-     override fun scheduleAutoUpdate() {
-         UpdateWorker.schedule(io.nekohasekai.sfa.Application.application)
-diff --git a/app/src/otherLegacy/java/io/nekohasekai/sfa/vendor/Vendor.kt b/app/src/otherLegacy/java/io/nekohasekai/sfa/vendor/Vendor.kt
-index 0cae2ea..0568991 100644
---- a/app/src/otherLegacy/java/io/nekohasekai/sfa/vendor/Vendor.kt
-+++ b/app/src/otherLegacy/java/io/nekohasekai/sfa/vendor/Vendor.kt
-@@ -14,7 +14,6 @@ import io.nekohasekai.sfa.database.Settings
- import io.nekohasekai.sfa.update.UpdateCheckException
- import io.nekohasekai.sfa.update.UpdateInfo
- import io.nekohasekai.sfa.update.UpdateState
--import io.nekohasekai.sfa.update.UpdateTrack
- 
- object Vendor : VendorInterface {
-     private const val TAG = "Vendor"
-@@ -95,12 +94,8 @@ object Vendor : VendorInterface {
- 
-     override val hasCustomUpdate = true
- 
--    override fun checkUpdateAsync(): UpdateInfo? {
--        val track = UpdateTrack.fromString(Settings.updateTrack)
--        return GitHubUpdateChecker().use { checker ->
--            checker.checkUpdate(track, Settings.githubToken)
--        }
--    }
-+    override fun checkUpdateAsync(): UpdateInfo? =
-+        GitHubUpdateChecker().use { it.checkUpdate(Settings.githubToken) }
- 
-     override fun scheduleAutoUpdate() {
-         UpdateWorker.schedule(io.nekohasekai.sfa.Application.application)
 -- 
-2.54.0
+2.56.0
 

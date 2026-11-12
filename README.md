@@ -13,6 +13,9 @@ The Android client comes from upstream `main` and must declare the same version
 as the selected sing-box tag. Go modules and Gomobile follow that tag's
 `go.mod`.
 
+Android `main` can change without a version bump. Its patches must be rebased
+when upstream changes; matching version names alone do not pin the source.
+
 The default `otherRelease` variant uses GitHub updates, release signing and
 minification, and builds all upstream ABI splits and the universal APK.
 The Android API level follows upstream's main libbox build variant.
