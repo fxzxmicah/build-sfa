@@ -1,4 +1,4 @@
-From b8639f73cb21925b4eedb0fab22717521737972b Mon Sep 17 00:00:00 2001
+From e07ec9122da3a5dc53790b4209f6c8c6ef93ab7e Mon Sep 17 00:00:00 2001
 From: Fxzx micah <48860358+fxzxmicah@users.noreply.github.com>
 Date: Tue, 1 Sep 2026 21:34:08 +0800
 Subject: [PATCH] update: use build repository
@@ -181,7 +181,7 @@ index 8ab1513..b9c84aa 100644
              route = "settings/core",
              enterTransition = slideInFromRight,
 diff --git a/app/src/main/java/io/nekohasekai/sfa/compose/screen/settings/AppSettingsScreen.kt b/app/src/main/java/io/nekohasekai/sfa/compose/screen/settings/AppSettingsScreen.kt
-index a5424ab..d5a6491 100644
+index a8ec04b..68154f7 100644
 --- a/app/src/main/java/io/nekohasekai/sfa/compose/screen/settings/AppSettingsScreen.kt
 +++ b/app/src/main/java/io/nekohasekai/sfa/compose/screen/settings/AppSettingsScreen.kt
 @@ -43,7 +43,6 @@ import androidx.compose.material.icons.outlined.Download
@@ -1190,10 +1190,10 @@ index db8fd2a..d466b9e 100644
  
      fun scheduleAutoUpdate() {}
 diff --git a/app/src/main/res/values-fa/strings.xml b/app/src/main/res/values-fa/strings.xml
-index d2aeb5b..12ab20d 100644
+index 7536fdd..8adbb65 100644
 --- a/app/src/main/res/values-fa/strings.xml
 +++ b/app/src/main/res/values-fa/strings.xml
-@@ -275,10 +275,6 @@
+@@ -279,10 +279,6 @@
      <string name="check_update_automatic">بررسی خودکار به‌روزرسانی</string>
      <string name="check_update_prompt_play">می‌خواهید بررسی خودکار به‌روزرسانی از **Play Store** فعال شود؟</string>
      <string name="check_update_prompt_github">می‌خواهید بررسی خودکار به‌روزرسانی از **GitHub** فعال شود؟</string>
@@ -1204,7 +1204,7 @@ index d2aeb5b..12ab20d 100644
      <string name="view_release">مشاهده انتشار</string>
      <string name="downloading">در حال دانلود…</string>
      <string name="exporting">در حال خروجی‌گیری…</string>
-@@ -286,24 +282,8 @@
+@@ -290,24 +286,8 @@
      <string name="new_version_available">نسخه جدید موجود است: %s</string>
      <string name="auto_update">به‌روزرسانی خودکار</string>
      <string name="auto_update_description">دانلود و نصب خودکار به‌روزرسانی‌ها در پس‌زمینه</string>
@@ -1230,10 +1230,10 @@ index d2aeb5b..12ab20d 100644
      <!-- Silent Install -->
      <string name="silent_install">نصب بی‌صدا</string>
 diff --git a/app/src/main/res/values-ru-rRU/strings.xml b/app/src/main/res/values-ru-rRU/strings.xml
-index 652e509..d458f61 100644
+index 22a8002..6285b47 100644
 --- a/app/src/main/res/values-ru-rRU/strings.xml
 +++ b/app/src/main/res/values-ru-rRU/strings.xml
-@@ -275,10 +275,6 @@
+@@ -279,10 +279,6 @@
      <string name="check_update_automatic">Автоматическая проверка обновлений</string>
      <string name="check_update_prompt_play">Включить автоматическую проверку обновлений через **Google Play**?</string>
      <string name="check_update_prompt_github">Включить автоматическую проверку обновлений через **GitHub**?</string>
@@ -1242,9 +1242,9 @@ index 652e509..d458f61 100644
 -    <string name="update_track_beta">Бета</string>
 -    <string name="update_track_not_supported">Этот канал пока не поддерживает проверку обновлений</string>
      <string name="view_release">Посмотреть релиз</string>
-     <string name="downloading">Загрузка...</string>
-     <string name="exporting">Экспорт...</string>
-@@ -286,24 +282,8 @@
+     <string name="downloading">Загрузка…</string>
+     <string name="exporting">Экспорт…</string>
+@@ -290,24 +286,8 @@
      <string name="new_version_available">Доступна новая версия: %s</string>
      <string name="auto_update">Автообновление</string>
      <string name="auto_update_description">Автоматически загружать и устанавливать обновления в фоне</string>
@@ -1270,21 +1270,21 @@ index 652e509..d458f61 100644
      <!-- Silent Install -->
      <string name="silent_install">Тихая установка</string>
 diff --git a/app/src/main/res/values-zh-rCN/strings.xml b/app/src/main/res/values-zh-rCN/strings.xml
-index 88ee5df..c9a946e 100644
+index e788045..d580eda 100644
 --- a/app/src/main/res/values-zh-rCN/strings.xml
 +++ b/app/src/main/res/values-zh-rCN/strings.xml
-@@ -277,10 +277,6 @@
+@@ -279,10 +279,6 @@
      <string name="check_update_automatic">自动检查更新</string>
      <string name="check_update_prompt_play">是否启用从 **Play Store** 自动检查更新？</string>
      <string name="check_update_prompt_github">是否启用从 **GitHub** 自动检查更新？</string>
--    <string name="update_track">更新轨道</string>
+-    <string name="update_track">更新通道</string>
 -    <string name="update_track_stable">稳定版</string>
 -    <string name="update_track_beta">Beta 版</string>
--    <string name="update_track_not_supported">当前轨道尚不支持检查更新</string>
+-    <string name="update_track_not_supported">当前通道尚不支持检查更新</string>
      <string name="view_release">查看发布</string>
      <string name="downloading">下载中…</string>
      <string name="exporting">导出中…</string>
-@@ -288,24 +284,8 @@
+@@ -290,24 +286,8 @@
      <string name="new_version_available">有新版本可用：%s</string>
      <string name="auto_update">自动更新</string>
      <string name="auto_update_description">在后台自动下载和安装更新</string>
@@ -1310,10 +1310,10 @@ index 88ee5df..c9a946e 100644
      <!-- Silent Install -->
      <string name="silent_install">静默安装</string>
 diff --git a/app/src/main/res/values-zh-rTW/strings.xml b/app/src/main/res/values-zh-rTW/strings.xml
-index d656b2e..4c253ac 100644
+index eba7bdd..035b26d 100644
 --- a/app/src/main/res/values-zh-rTW/strings.xml
 +++ b/app/src/main/res/values-zh-rTW/strings.xml
-@@ -277,10 +277,6 @@
+@@ -279,10 +279,6 @@
      <string name="check_update_automatic">自動檢查更新</string>
      <string name="check_update_prompt_play">是否啟用從 **Play Store** 自動檢查更新？</string>
      <string name="check_update_prompt_github">是否啟用從 **GitHub** 自動檢查更新？</string>
@@ -1324,7 +1324,7 @@ index d656b2e..4c253ac 100644
      <string name="view_release">查看發布</string>
      <string name="downloading">下載中…</string>
      <string name="exporting">匯出中…</string>
-@@ -288,24 +284,8 @@
+@@ -290,24 +286,8 @@
      <string name="new_version_available">有新版本可用：%s</string>
      <string name="auto_update">自動更新</string>
      <string name="auto_update_description">在背景自動下載並安裝更新</string>
@@ -1350,10 +1350,10 @@ index d656b2e..4c253ac 100644
      <!-- Silent Install -->
      <string name="silent_install">靜默安裝</string>
 diff --git a/app/src/main/res/values/strings.xml b/app/src/main/res/values/strings.xml
-index fa24713..5f0678c 100644
+index 662e2fd..1b60ab2 100644
 --- a/app/src/main/res/values/strings.xml
 +++ b/app/src/main/res/values/strings.xml
-@@ -277,15 +277,8 @@
+@@ -279,15 +279,8 @@
      <string name="check_update_automatic">Automatic Update Check</string>
      <string name="check_update_prompt_play">Would you like to enable automatic update checking from **Play Store**?</string>
      <string name="check_update_prompt_github">Would you like to enable automatic update checking from **GitHub**?</string>
@@ -1369,7 +1369,7 @@ index fa24713..5f0678c 100644
      <string name="view_release">View Release</string>
      <string name="downloading">Downloading…</string>
      <string name="exporting">Exporting…</string>
-@@ -293,19 +286,6 @@
+@@ -295,19 +288,6 @@
      <string name="new_version_available">New version available: %s</string>
      <string name="auto_update">Auto Update</string>
      <string name="auto_update_description">Automatically download and install updates in background</string>

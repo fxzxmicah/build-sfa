@@ -1,0 +1,99 @@
+From 8648d9f1b7228590d1f881f67f07af62fdd2c8f4 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=E4=B8=96=E7=95=8C?= <i@sekai.icu>
+Date: Fri, 27 Nov 2026 19:59:55 +0800
+Subject: [PATCH] Fix record type width in badtls writeRecordLocked
+
+(cherry picked from commit 593b9b2e6b566befd13c9bdcf343b528fd5cab06)
+---
+ common/badtls/raw_conn.go      | 2 +-
+ common/badtls/registry.go      | 4 ++--
+ common/badtls/registry_utls.go | 2 +-
+ common/ktls/ktls_linux.go      | 4 ++--
+ common/ktls/ktls_write.go      | 2 +-
+ 5 files changed, 7 insertions(+), 7 deletions(-)
+
+diff --git a/common/badtls/raw_conn.go b/common/badtls/raw_conn.go
+index 774e39a..15cfdde 100644
+--- a/common/badtls/raw_conn.go
++++ b/common/badtls/raw_conn.go
+@@ -171,6 +171,6 @@ func (c *RawConn) HandlePostHandshakeMessage() error {
+ 	return c.methods.handlePostHandshakeMessage(c.pointer)
+ }
+ 
+-func (c *RawConn) WriteRecordLocked(typ uint16, data []byte) (int, error) {
++func (c *RawConn) WriteRecordLocked(typ uint8, data []byte) (int, error) {
+ 	return c.methods.writeRecordLocked(c.pointer, typ, data)
+ }
+diff --git a/common/badtls/registry.go b/common/badtls/registry.go
+index 6402898..39c7f6b 100644
+--- a/common/badtls/registry.go
++++ b/common/badtls/registry.go
+@@ -17,7 +17,7 @@ var _ *tls.Conn
+ type Methods struct {
+ 	readRecord                 func(c unsafe.Pointer) error
+ 	handlePostHandshakeMessage func(c unsafe.Pointer) error
+-	writeRecordLocked          func(c unsafe.Pointer, typ uint16, data []byte) (int, error)
++	writeRecordLocked          func(c unsafe.Pointer, typ uint8, data []byte) (int, error)
+ 
+ 	setErrorLocked   func(hc unsafe.Pointer, err error) error
+ 	decrypt          func(hc unsafe.Pointer, record []byte) ([]byte, uint8, error)
+@@ -53,7 +53,7 @@ func stdTLSReadRecord(c unsafe.Pointer) error
+ func stdTLSHandlePostHandshakeMessage(c unsafe.Pointer) error
+ 
+ //go:linkname stdWriteRecordLocked crypto/tls.(*Conn).writeRecordLocked
+-func stdWriteRecordLocked(c unsafe.Pointer, typ uint16, data []byte) (int, error)
++func stdWriteRecordLocked(c unsafe.Pointer, typ uint8, data []byte) (int, error)
+ 
+ //go:linkname stdSetErrorLocked crypto/tls.(*halfConn).setErrorLocked
+ func stdSetErrorLocked(hc unsafe.Pointer, err error) error
+diff --git a/common/badtls/registry_utls.go b/common/badtls/registry_utls.go
+index 330f64f..10b5933 100644
+--- a/common/badtls/registry_utls.go
++++ b/common/badtls/registry_utls.go
+@@ -41,7 +41,7 @@ func utlsReadRecord(c unsafe.Pointer) error
+ func utlsHandlePostHandshakeMessage(c unsafe.Pointer) error
+ 
+ //go:linkname utlsWriteRecordLocked github.com/metacubex/utls.(*Conn).writeRecordLocked
+-func utlsWriteRecordLocked(hc unsafe.Pointer, typ uint16, data []byte) (int, error)
++func utlsWriteRecordLocked(hc unsafe.Pointer, typ uint8, data []byte) (int, error)
+ 
+ //go:linkname utlsSetErrorLocked github.com/metacubex/utls.(*halfConn).setErrorLocked
+ func utlsSetErrorLocked(hc unsafe.Pointer, err error) error
+diff --git a/common/ktls/ktls_linux.go b/common/ktls/ktls_linux.go
+index 1e32775..ae15309 100644
+--- a/common/ktls/ktls_linux.go
++++ b/common/ktls/ktls_linux.go
+@@ -287,7 +287,7 @@ func (c *Conn) readKernelRecord() (uint8, []byte, error) {
+ 	return recordTypeApplicationData, data[:n], nil
+ }
+ 
+-func (c *Conn) writeKernelRecord(typ uint16, data []byte) (int, error) {
++func (c *Conn) writeKernelRecord(typ uint8, data []byte) (int, error) {
+ 	if typ == recordTypeApplicationData {
+ 		return c.conn.Write(data)
+ 	}
+@@ -296,7 +296,7 @@ func (c *Conn) writeKernelRecord(typ uint16, data []byte) (int, error) {
+ 	buffer := make([]byte, unix.CmsgSpace(1))
+ 	cmsg := (*unix.Cmsghdr)(unsafe.Pointer(&buffer[0]))
+ 	cmsg.SetLen(unix.CmsgLen(1))
+-	buffer[unix.CmsgLen(0)] = byte(typ)
++	buffer[unix.CmsgLen(0)] = typ
+ 	cmsg.Level = unix.SOL_TLS
+ 	cmsg.Type = TLS_SET_RECORD_TYPE
+ 
+diff --git a/common/ktls/ktls_write.go b/common/ktls/ktls_write.go
+index f4e0f65..c268cd4 100644
+--- a/common/ktls/ktls_write.go
++++ b/common/ktls/ktls_write.go
+@@ -73,7 +73,7 @@ func (c *Conn) Write(b []byte) (int, error) {
+ 	return n + m, c.rawConn.Out.SetErrorLocked(err)
+ }
+ 
+-func (c *Conn) writeRecordLocked(typ uint16, data []byte) (n int, err error) {
++func (c *Conn) writeRecordLocked(typ uint8, data []byte) (n int, err error) {
+ 	if !c.kernelTx {
+ 		return c.rawConn.WriteRecordLocked(typ, data)
+ 	}
+-- 
+2.56.0
+

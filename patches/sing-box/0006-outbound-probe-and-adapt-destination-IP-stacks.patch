@@ -1,4 +1,4 @@
-From 27f494c1859cbf4745e53dd8115afa0a7f9fdcd5 Mon Sep 17 00:00:00 2001
+From dd4ad309c9d4c0f9071b1c1ca6b3b88467711646 Mon Sep 17 00:00:00 2001
 From: Fxzx micah <48860358+fxzxmicah@users.noreply.github.com>
 Date: Fri, 27 Nov 2026 00:00:02 +0800
 Subject: [PATCH] outbound: probe and adapt destination IP stacks
@@ -7,28 +7,28 @@ Subject: [PATCH] outbound: probe and adapt destination IP stacks
  adapter/dns.go                            |   1 +
  adapter/ip_stack.go                       |  58 ++
  adapter/ip_stack_test.go                  |  46 ++
- common/urltest/history.go                 | 103 +++
+ common/urltest/history.go                 | 112 ++++
  common/urltest/http.go                    |  69 ++
  common/urltest/http3.go                   |  46 ++
  common/urltest/http3_stub.go              |  16 +
  common/urltest/ip_stack_test.go           | 161 +++++
- common/urltest/urltest.go                 | 328 ++++++----
+ common/urltest/urltest.go                 | 338 ++++++----
  daemon/started_service.go                 |  28 +-
  daemon/started_service.pb.go              | 738 ++++++++++++++--------
  daemon/started_service.proto              |  17 +
- dns/ip_stack_test.go                      | 245 +++++++
+ dns/ip_stack_test.go                      | 269 ++++++++
  dns/router.go                             | 151 +++--
  docs/configuration/outbound/urltest.md    |  39 +-
  docs/configuration/outbound/urltest.zh.md |  28 +-
  experimental/clashapi/proxies.go          |  11 +-
  experimental/clashapi/server.go           |   7 +-
  experimental/libbox/command_types.go      |  39 +-
- protocol/group/urltest.go                 |  46 +-
+ protocol/group/urltest.go                 |  44 +-
  route/ip_stack.go                         |  46 ++
  route/ip_stack_test.go                    |  91 +++
  route/route.go                            |   5 +
  route/router.go                           |   3 +
- 24 files changed, 1833 insertions(+), 489 deletions(-)
+ 24 files changed, 1865 insertions(+), 498 deletions(-)
  create mode 100644 adapter/ip_stack.go
  create mode 100644 adapter/ip_stack_test.go
  create mode 100644 common/urltest/history.go
@@ -41,13 +41,13 @@ Subject: [PATCH] outbound: probe and adapt destination IP stacks
  create mode 100644 route/ip_stack_test.go
 
 diff --git a/adapter/dns.go b/adapter/dns.go
-index 8119097..ab4016b 100644
+index 2cd726e..3ae535b 100644
 --- a/adapter/dns.go
 +++ b/adapter/dns.go
-@@ -20,6 +20,7 @@ type DNSRouter interface {
- 	Lookup(ctx context.Context, domain string, options DNSQueryOptions) ([]netip.Addr, error)
+@@ -21,6 +21,7 @@ type DNSRouter interface {
  	ClearCache()
  	LookupReverseMapping(ip netip.Addr) (string, bool)
+ 	LookupECHPublicName(domain string) string
 +	LookupRelatedAddresses(ctx context.Context, ip netip.Addr) ([]netip.Addr, error)
  	ResetNetwork()
  }
@@ -170,13 +170,14 @@ index 0000000..c6f012b
 +}
 diff --git a/common/urltest/history.go b/common/urltest/history.go
 new file mode 100644
-index 0000000..0a2ddd2
+index 0000000..0672196
 --- /dev/null
 +++ b/common/urltest/history.go
-@@ -0,0 +1,103 @@
+@@ -0,0 +1,112 @@
 +package urltest
 +
 +import (
++	"maps"
 +	"sync"
 +
 +	"github.com/sagernet/sing-box/adapter"
@@ -233,6 +234,15 @@ index 0000000..0a2ddd2
 +	s.access.Unlock()
 +}
 +
++func (s *HistoryStorage) UpdateURLTestHistory(stored map[string]*adapter.URLTestHistory, deleted []string) {
++	s.access.Lock()
++	defer s.access.Unlock()
++	for _, tag := range deleted {
++		delete(s.delayHistory, tag)
++	}
++	maps.Copy(s.delayHistory, stored)
++}
++
 +func (s *HistoryStorage) notifyUpdated() {
 +	for _, updateHook := range s.updateHooks {
 +		updateHook.Emit(struct{}{})
@@ -266,7 +276,6 @@ index 0000000..0a2ddd2
 +		value.UDP = capabilities
 +	}
 +	s.ipStacks[tag] = value
-+	s.notifyUpdated()
 +	s.access.Unlock()
 +}
 +
@@ -594,14 +603,15 @@ index 0000000..b5934be
 +	}
 +}
 diff --git a/common/urltest/urltest.go b/common/urltest/urltest.go
-index 26efe39..79bba82 100644
+index 73cf13c..79bba82 100644
 --- a/common/urltest/urltest.go
 +++ b/common/urltest/urltest.go
-@@ -2,152 +2,246 @@ package urltest
+@@ -2,162 +2,246 @@ package urltest
  
  import (
  	"context"
 -	"crypto/tls"
+-	"maps"
 +	"errors"
  	"net"
  	"net/http"
@@ -682,6 +692,15 @@ index 26efe39..79bba82 100644
 -	s.delayHistory[tag] = history
 -	s.notifyUpdated()
 -	s.access.Unlock()
+-}
+-
+-func (s *HistoryStorage) UpdateURLTestHistory(stored map[string]*adapter.URLTestHistory, deleted []string) {
+-	s.access.Lock()
+-	defer s.access.Unlock()
+-	for _, tag := range deleted {
+-		delete(s.delayHistory, tag)
+-	}
+-	maps.Copy(s.delayHistory, stored)
 -}
 -
 -func (s *HistoryStorage) notifyUpdated() {
@@ -962,10 +981,10 @@ index 26efe39..79bba82 100644
 +	return 0, false
  }
 diff --git a/daemon/started_service.go b/daemon/started_service.go
-index 41c9c92..18fbb9f 100644
+index f772a54..999df0a 100644
 --- a/daemon/started_service.go
 +++ b/daemon/started_service.go
-@@ -620,6 +620,7 @@ func (s *StartedService) readGroups() *Groups {
+@@ -621,6 +621,7 @@ func (s *StartedService) readGroups() *Groups {
  			var item GroupItem
  			item.Tag = itemTag
  			item.Type = itemOutbound.Type()
@@ -973,7 +992,7 @@ index 41c9c92..18fbb9f 100644
  			if history := historyStorage.LoadURLTestHistory(group.RealTag(itemOutbound, N.NetworkTCP)); history != nil {
  				item.UrlTestTime = history.Time.Unix()
  				item.UrlTestDelay = int32(history.Delay)
-@@ -634,6 +635,23 @@ func (s *StartedService) readGroups() *Groups {
+@@ -635,6 +636,23 @@ func (s *StartedService) readGroups() *Groups {
  	return &gs
  }
  
@@ -997,7 +1016,7 @@ index 41c9c92..18fbb9f 100644
  func (s *StartedService) GetClashModeStatus(ctx context.Context, empty *emptypb.Empty) (*ClashModeStatus, error) {
  	s.serviceAccess.RLock()
  	if s.serviceStatus.Status != ServiceStatus_STARTED {
-@@ -1177,8 +1195,9 @@ func (s *StartedService) SubscribeOutbounds(_ *emptypb.Empty, server grpc.Server
+@@ -1178,8 +1196,9 @@ func (s *StartedService) SubscribeOutbounds(_ *emptypb.Empty, server grpc.Server
  			historyStorage := boxService.urlTestHistoryStorage
  			for _, ob := range boxService.outboundManager.Outbounds() {
  				item := &GroupItem{
@@ -1009,7 +1028,7 @@ index 41c9c92..18fbb9f 100644
  				}
  				if history := historyStorage.LoadURLTestHistory(group.RealTag(ob, N.NetworkTCP)); history != nil {
  					item.UrlTestTime = history.Time.Unix()
-@@ -1188,8 +1207,9 @@ func (s *StartedService) SubscribeOutbounds(_ *emptypb.Empty, server grpc.Server
+@@ -1189,8 +1208,9 @@ func (s *StartedService) SubscribeOutbounds(_ *emptypb.Empty, server grpc.Server
  			}
  			for _, ep := range boxService.endpointManager.Endpoints() {
  				item := &GroupItem{
@@ -1897,10 +1916,10 @@ index 2c27937..d15bb61 100644
 +}
 diff --git a/dns/ip_stack_test.go b/dns/ip_stack_test.go
 new file mode 100644
-index 0000000..3f5f73b
+index 0000000..c48b00c
 --- /dev/null
 +++ b/dns/ip_stack_test.go
-@@ -0,0 +1,245 @@
+@@ -0,0 +1,269 @@
 +package dns
 +
 +import (
@@ -1950,9 +1969,33 @@ index 0000000..3f5f73b
 +		t.Fatal("internal association enabled public reverse mapping")
 +	}
 +	router.dnsReverseMapping = common.Must1(freelru.New[netip.Addr, string](16, maphash.NewHasher[netip.Addr]().Hash32, true))
-+	router.recordReverseMapping(message, response, nil)
-+	if domain, loaded := router.LookupReverseMapping(ip); !loaded || domain != "cdn.example" {
++	router.dnsECHPublicNames = common.Must1(freelru.New[string, string](16, maphash.NewHasher[string]().Hash32, true))
++	router.recordReverseMapping(mapping.query, response, nil)
++	if domain, loaded := router.LookupReverseMapping(ip); !loaded || domain != "www.example" {
 +		t.Fatal("public reverse mapping changed its domain semantics")
++	}
++}
++
++func TestAddressAssociationRespectsDisabledReverseMapping(t *testing.T) {
++	for _, disabled := range []bool{false, true} {
++		router := &Router{
++			addressMapping: common.Must1(freelru.New[netip.Addr, dnsAddressMapping](16, maphash.NewHasher[netip.Addr]().Hash32, true)),
++		}
++		query := new(mDNS.Msg)
++		query.SetQuestion("www.example.", mDNS.TypeA)
++		address := netip.MustParseAddr("192.0.2.1")
++		response := FixedResponse(query.Id, query.Question[0], []netip.Addr{address}, 60)
++		router.finishExchangeAsync(query, adapter.DNSQueryOptions{DisableReverseMapping: disabled}, exchangeWithRulesResult{
++			response:  response,
++			transport: &relatedAddressTransport{},
++		}, func(actual *mDNS.Msg, err error) {
++			if actual != response || err != nil {
++				t.Fatalf("unexpected response: %v, %v", actual, err)
++			}
++		})
++		if _, loaded := router.addressMapping.Get(address); loaded == disabled {
++			t.Fatalf("association present = %v, DisableReverseMapping = %v", loaded, disabled)
++		}
 +	}
 +}
 +
@@ -2147,18 +2190,18 @@ index 0000000..3f5f73b
 +	}
 +}
 diff --git a/dns/router.go b/dns/router.go
-index 40107d9..45489ef 100644
+index d45f23d..0d97045 100644
 --- a/dns/router.go
 +++ b/dns/router.go
-@@ -45,6 +45,7 @@ type Router struct {
+@@ -47,6 +47,7 @@ type Router struct {
  	rawRules              []option.DNSRule
  	rules                 []adapter.DNSRule
  	defaultDomainStrategy C.DomainStrategy
 +	addressMapping        *freelru.Cache[netip.Addr, dnsAddressMapping]
  	dnsReverseMapping     *freelru.Cache[netip.Addr, string]
+ 	dnsECHPublicNames     *freelru.Cache[string, string]
  	platformInterface     adapter.PlatformInterface
- 	legacyDNSMode         bool
-@@ -53,6 +54,13 @@ type Router struct {
+@@ -56,6 +57,13 @@ type Router struct {
  	closing               bool
  }
  
@@ -2172,15 +2215,15 @@ index 40107d9..45489ef 100644
  func NewRouter(ctx context.Context, logFactory log.Factory, options option.DNSOptions) (*Router, error) {
  	router := &Router{
  		ctx:                   ctx,
-@@ -116,6 +124,7 @@ func NewRouter(ctx context.Context, logFactory log.Factory, options option.DNSOp
- 	if options.ReverseMapping {
- 		router.dnsReverseMapping = common.Must1(freelru.New[netip.Addr, string](1024, maphash.NewHasher[netip.Addr]().Hash32, true))
+@@ -124,6 +132,7 @@ func NewRouter(ctx context.Context, logFactory log.Factory, options option.DNSOp
+ 	}) {
+ 		router.dnsECHPublicNames = common.Must1(freelru.New[string, string](1024, maphash.NewHasher[string]().Hash32, true))
  	}
 +	router.addressMapping = common.Must1(freelru.New[netip.Addr, dnsAddressMapping](max(options.DNSClientOptions.CacheCapacity, 1024), maphash.NewHasher[netip.Addr]().Hash32, true))
  	return router, nil
  }
  
-@@ -424,6 +433,7 @@ func (r *Router) logRuleMatch(ctx context.Context, ruleIndex int, currentRule ad
+@@ -432,6 +441,7 @@ func (r *Router) logRuleMatch(ctx context.Context, ruleIndex int, currentRule ad
  type exchangeWithRulesResult struct {
  	response     *mDNS.Msg
  	transport    adapter.DNSTransport
@@ -2188,7 +2231,7 @@ index 40107d9..45489ef 100644
  	rejectAction *R.RuleActionReject
  	err          error
  }
-@@ -437,7 +447,7 @@ type dnsRuleWalkState struct {
+@@ -445,7 +455,7 @@ type dnsRuleWalkState struct {
  	anonymousFuture  *dnsEvaluatedFuture
  	namedFutures     map[string]*dnsEvaluatedFuture
  	namedResponses   map[string]*mDNS.Msg
@@ -2197,7 +2240,7 @@ index 40107d9..45489ef 100644
  	futures          []*dnsEvaluatedFuture
  	armedRules       []*dnsArmedRule
  	terminalFuture   *dnsEvaluatedFuture
-@@ -456,6 +466,7 @@ type dnsEvaluatedFuture struct {
+@@ -464,6 +474,7 @@ type dnsEvaluatedFuture struct {
  	tag       string
  	terminal  bool
  	transport adapter.DNSTransport
@@ -2205,7 +2248,7 @@ index 40107d9..45489ef 100644
  	cancel    context.CancelFunc
  	done      chan struct{}
  	response  *mDNS.Msg
-@@ -509,11 +520,12 @@ func (r *Router) launchDNSEvaluate(ctx context.Context, state *dnsRuleWalkState,
+@@ -517,11 +528,12 @@ func (r *Router) launchDNSEvaluate(ctx context.Context, state *dnsRuleWalkState,
  	future := &dnsEvaluatedFuture{
  		tag:       tag,
  		transport: transport,
@@ -2219,7 +2262,7 @@ index 40107d9..45489ef 100644
  		future.response = response
  		future.err = err
  		close(future.done)
-@@ -541,10 +553,15 @@ func (r *Router) settleDNSFutures(ctx context.Context, message *mDNS.Msg, state
+@@ -549,10 +561,15 @@ func (r *Router) settleDNSFutures(ctx context.Context, message *mDNS.Msg, state
  		maps.Copy(newResponses, state.namedResponses)
  		newResponses[future.tag] = future.view()
  		state.namedResponses = newResponses
@@ -2239,7 +2282,7 @@ index 40107d9..45489ef 100644
  	}
  }
  
-@@ -688,10 +705,7 @@ func (r *Router) walkDNSRules(ctx context.Context, rules []adapter.DNSRule, mess
+@@ -696,10 +713,7 @@ func (r *Router) walkDNSRules(ctx context.Context, rules []adapter.DNSRule, mess
  						err: E.New(dnsRespondMissingResponseMessage),
  					}, nil
  				}
@@ -2251,7 +2294,7 @@ index 40107d9..45489ef 100644
  			}
  			if !hasBindings {
  				if future := state.anonymousFuture; future != nil && !future.resolved() {
-@@ -707,6 +721,7 @@ func (r *Router) walkDNSRules(ctx context.Context, rules []adapter.DNSRule, mess
+@@ -715,6 +729,7 @@ func (r *Router) walkDNSRules(ctx context.Context, rules []adapter.DNSRule, mess
  			return exchangeWithRulesResult{
  				response:  response,
  				transport: state.anonymousFuture.transport,
@@ -2259,7 +2302,7 @@ index 40107d9..45489ef 100644
  			}, nil
  		case *R.RuleActionDNSRoute:
  			queryOptions := state.effectiveOptions
-@@ -841,16 +856,20 @@ func (r *Router) sweepArmedDNSRules(ctx context.Context, message *mDNS.Msg, stat
+@@ -849,16 +864,20 @@ func (r *Router) sweepArmedDNSRules(ctx context.Context, message *mDNS.Msg, stat
  			var (
  				response  *mDNS.Msg
  				transport adapter.DNSTransport
@@ -2281,7 +2324,7 @@ index 40107d9..45489ef 100644
  			}
  			if response == nil {
  				return exchangeWithRulesResult{
-@@ -860,6 +879,7 @@ func (r *Router) sweepArmedDNSRules(ctx context.Context, message *mDNS.Msg, stat
+@@ -868,6 +887,7 @@ func (r *Router) sweepArmedDNSRules(ctx context.Context, message *mDNS.Msg, stat
  			return exchangeWithRulesResult{
  				response:  response,
  				transport: transport,
@@ -2289,7 +2332,7 @@ index 40107d9..45489ef 100644
  			}, nil, true
  		case *R.RuleActionDNSRoute:
  			queryOptions := armed.options
-@@ -909,13 +929,16 @@ func (r *Router) finishPendingExchange(ctx context.Context, message *mDNS.Msg, s
+@@ -917,13 +937,16 @@ func (r *Router) finishPendingExchange(ctx context.Context, message *mDNS.Msg, s
  		return exchangeWithRulesResult{
  			response:  pending.future.view(),
  			transport: pending.future.transport,
@@ -2307,7 +2350,7 @@ index 40107d9..45489ef 100644
  		err:       err,
  	}
  }
-@@ -931,10 +954,12 @@ func (r *Router) exchangeWithRulesAsync(ctx context.Context, rules []adapter.DNS
+@@ -939,10 +962,12 @@ func (r *Router) exchangeWithRulesAsync(ctx context.Context, rules []adapter.DNS
  	if suspension.pending != nil && suspension.pending.future == nil {
  		cancelDNSFutures(state)
  		pending := suspension.pending
@@ -2321,7 +2364,7 @@ index 40107d9..45489ef 100644
  				err:       err,
  			})
  		})
-@@ -1118,6 +1143,27 @@ func (r *Router) prepareExchange(ctx context.Context, message *mDNS.Msg) (*dnsEx
+@@ -1126,6 +1151,27 @@ func (r *Router) prepareExchange(ctx context.Context, message *mDNS.Msg) (*dnsEx
  	}, nil, nil
  }
  
@@ -2347,10 +2390,10 @@ index 40107d9..45489ef 100644
 +}
 +
  func (r *Router) recordReverseMapping(message *mDNS.Msg, response *mDNS.Msg, transport adapter.DNSTransport) {
- 	if r.dnsReverseMapping != nil && len(message.Question) > 0 && response != nil && len(response.Answer) > 0 {
- 		if transport == nil || transport.Type() != C.DNSTypeFakeIP {
-@@ -1133,7 +1179,7 @@ func (r *Router) recordReverseMapping(message *mDNS.Msg, response *mDNS.Msg, tra
- 	}
+ 	if r.dnsECHPublicNames == nil || len(message.Question) == 0 || response == nil || response.Rcode != mDNS.RcodeSuccess {
+ 		return
+@@ -1212,7 +1258,7 @@ func echPublicName(record *mDNS.HTTPS) string {
+ 	return ""
  }
  
 -func (r *Router) exchangeLegacy(ctx context.Context, exchangeCtx *dnsExchangeContext, message *mDNS.Msg, options adapter.DNSQueryOptions) (*mDNS.Msg, adapter.DNSTransport, error) {
@@ -2358,7 +2401,7 @@ index 40107d9..45489ef 100644
  	var (
  		transport adapter.DNSTransport
  		rule      adapter.DNSRule
-@@ -1149,23 +1195,24 @@ func (r *Router) exchangeLegacy(ctx context.Context, exchangeCtx *dnsExchangeCon
+@@ -1228,23 +1274,24 @@ func (r *Router) exchangeLegacy(ctx context.Context, exchangeCtx *dnsExchangeCon
  			case *R.RuleActionReject:
  				switch action.Method {
  				case C.RuleActionRejectMethodDefault:
@@ -2388,7 +2431,7 @@ index 40107d9..45489ef 100644
  		var rejected bool
  		if err != nil {
  			if errors.Is(err, ErrResponseRejectedCached) {
-@@ -1183,7 +1230,7 @@ func (r *Router) exchangeLegacy(ctx context.Context, exchangeCtx *dnsExchangeCon
+@@ -1262,7 +1309,7 @@ func (r *Router) exchangeLegacy(ctx context.Context, exchangeCtx *dnsExchangeCon
  		if responseCheck != nil && rejected {
  			continue
  		}
@@ -2397,7 +2440,7 @@ index 40107d9..45489ef 100644
  	}
  }
  
-@@ -1193,24 +1240,21 @@ func (r *Router) Exchange(ctx context.Context, message *mDNS.Msg, options adapte
+@@ -1272,26 +1319,23 @@ func (r *Router) Exchange(ctx context.Context, message *mDNS.Msg, options adapte
  		return earlyResponse, err
  	}
  	ctx = exchangeCtx.ctx
@@ -2425,53 +2468,57 @@ index 40107d9..45489ef 100644
 +	if result.err != nil {
 +		return nil, result.err
  	}
--	r.recordReverseMapping(message, response, transport)
+ 	if !options.DisableReverseMapping {
+-		r.recordReverseMapping(message, response, transport)
++		r.recordAddressMapping(message, result.response, result.transport, result.options)
+ 	}
 -	return response, nil
-+	r.recordAddressMapping(message, result.response, result.transport, result.options)
 +	return result.response, nil
  }
  
  func (r *Router) ExchangeAsync(ctx context.Context, message *mDNS.Msg, options adapter.DNSQueryOptions, callback func(response *mDNS.Msg, err error)) {
-@@ -1222,28 +1266,28 @@ func (r *Router) ExchangeAsync(ctx context.Context, message *mDNS.Msg, options a
+@@ -1303,30 +1347,30 @@ func (r *Router) ExchangeAsync(ctx context.Context, message *mDNS.Msg, options a
  	ctx = exchangeCtx.ctx
  	if options.Transport != nil {
  		transport := options.Transport
 -		r.client.ExchangeAsync(ctx, transport, message, r.finalizeExchangeOptions(options), nil, func(response *mDNS.Msg, exchangeErr error) {
--			r.finishExchangeAsync(message, transport, response, exchangeErr, callback)
+-			r.finishExchangeAsync(message, options, transport, response, exchangeErr, callback)
 +		options = r.finalizeExchangeOptions(options)
 +		r.client.ExchangeAsync(ctx, transport, message, options, nil, func(response *mDNS.Msg, exchangeErr error) {
-+			r.finishExchangeAsync(message, exchangeWithRulesResult{response: response, transport: transport, options: options, err: exchangeErr}, callback)
++			r.finishExchangeAsync(message, options, exchangeWithRulesResult{response: response, transport: transport, options: options, err: exchangeErr}, callback)
  		})
  	} else if !exchangeCtx.legacyDNSMode {
  		r.exchangeWithRulesAsync(ctx, exchangeCtx.rules, message, options, true, func(result exchangeWithRulesResult) {
--			r.finishExchangeAsync(message, result.transport, result.response, result.err, callback)
-+			r.finishExchangeAsync(message, result, callback)
+-			r.finishExchangeAsync(message, options, result.transport, result.response, result.err, callback)
++			r.finishExchangeAsync(message, options, result, callback)
  		})
  	} else {
  		go func() {
 -			response, transport, exchangeErr := r.exchangeLegacy(ctx, exchangeCtx, message, options)
--			r.finishExchangeAsync(message, transport, response, exchangeErr, callback)
-+			r.finishExchangeAsync(message, r.exchangeLegacy(ctx, exchangeCtx, message, options), callback)
+-			r.finishExchangeAsync(message, options, transport, response, exchangeErr, callback)
++			r.finishExchangeAsync(message, options, r.exchangeLegacy(ctx, exchangeCtx, message, options), callback)
  		}()
  	}
  }
  
--func (r *Router) finishExchangeAsync(message *mDNS.Msg, transport adapter.DNSTransport, response *mDNS.Msg, err error, callback func(response *mDNS.Msg, err error)) {
+-func (r *Router) finishExchangeAsync(message *mDNS.Msg, options adapter.DNSQueryOptions, transport adapter.DNSTransport, response *mDNS.Msg, err error, callback func(response *mDNS.Msg, err error)) {
 -	if err != nil {
 -		callback(nil, err)
-+func (r *Router) finishExchangeAsync(message *mDNS.Msg, result exchangeWithRulesResult, callback func(response *mDNS.Msg, err error)) {
++func (r *Router) finishExchangeAsync(message *mDNS.Msg, options adapter.DNSQueryOptions, result exchangeWithRulesResult, callback func(response *mDNS.Msg, err error)) {
 +	if result.err != nil {
 +		callback(nil, result.err)
  		return
  	}
--	r.recordReverseMapping(message, response, transport)
+ 	if !options.DisableReverseMapping {
+-		r.recordReverseMapping(message, response, transport)
++		r.recordAddressMapping(message, result.response, result.transport, result.options)
+ 	}
 -	callback(response, nil)
-+	r.recordAddressMapping(message, result.response, result.transport, result.options)
 +	callback(result.response, nil)
  }
  
  func (r *Router) Lookup(ctx context.Context, domain string, options adapter.DNSQueryOptions) ([]netip.Addr, error) {
-@@ -1377,6 +1421,7 @@ func (r *Router) ClearCache() {
+@@ -1460,6 +1504,7 @@ func (r *Router) ClearCache() {
  		r.platformInterface.ClearDNSCache()
  	}
  	service.FromContext[adapter.NetworkManager](r.ctx).FlushSystemDNSCache()
@@ -2479,8 +2526,8 @@ index 40107d9..45489ef 100644
  	if r.dnsReverseMapping != nil {
  		r.dnsReverseMapping.Purge()
  	}
-@@ -1390,6 +1435,26 @@ func (r *Router) LookupReverseMapping(ip netip.Addr) (string, bool) {
- 	return domain, loaded
+@@ -1484,6 +1529,26 @@ func (r *Router) LookupECHPublicName(domain string) string {
+ 	return publicName
  }
  
 +func (r *Router) LookupRelatedAddresses(ctx context.Context, ip netip.Addr) ([]netip.Addr, error) {
@@ -2737,27 +2784,19 @@ index 5be81a2..99f0e35 100644
  	var processInfo *ProcessInfo
  	if conn.ProcessInfo != nil {
 diff --git a/protocol/group/urltest.go b/protocol/group/urltest.go
-index 46049d2..91e701d 100644
+index 704bc1f..bd32ad0 100644
 --- a/protocol/group/urltest.go
 +++ b/protocol/group/urltest.go
-@@ -313,14 +313,14 @@ func (g *URLTestGroup) Select(network string) (adapter.Outbound, bool) {
- 	switch network {
- 	case N.NetworkTCP:
- 		if g.selectedOutboundTCP != nil {
--			if history := g.history.LoadURLTestHistory(RealTag(g.selectedOutboundTCP, N.NetworkTCP)); history != nil {
-+			if history := g.networkHistory(g.selectedOutboundTCP, N.NetworkTCP); history != nil {
- 				minOutbound = g.selectedOutboundTCP
- 				minDelay = history.Delay
- 			}
+@@ -334,7 +334,7 @@ func (g *URLTestGroup) Select(network string) (adapter.Outbound, bool) {
+ 		selectedOutbound = g.selectedOutboundUDP.Load()
+ 	}
+ 	if selectedOutbound != nil {
+-		if history := g.history.LoadURLTestHistory(RealTag(selectedOutbound, network)); history != nil {
++		if history := g.networkHistory(selectedOutbound, network); history != nil {
+ 			minOutbound = selectedOutbound
+ 			minDelay = history.Delay
  		}
- 	case N.NetworkUDP:
- 		if g.selectedOutboundUDP != nil {
--			if history := g.history.LoadURLTestHistory(RealTag(g.selectedOutboundUDP, N.NetworkUDP)); history != nil {
-+			if history := g.networkHistory(g.selectedOutboundUDP, N.NetworkUDP); history != nil {
- 				minOutbound = g.selectedOutboundUDP
- 				minDelay = history.Delay
- 			}
-@@ -330,7 +330,7 @@ func (g *URLTestGroup) Select(network string) (adapter.Outbound, bool) {
+@@ -343,7 +343,7 @@ func (g *URLTestGroup) Select(network string) (adapter.Outbound, bool) {
  		if !common.Contains(detour.Network(), network) {
  			continue
  		}
@@ -2766,7 +2805,7 @@ index 46049d2..91e701d 100644
  		if history == nil {
  			continue
  		}
-@@ -351,6 +351,17 @@ func (g *URLTestGroup) Select(network string) (adapter.Outbound, bool) {
+@@ -364,6 +364,17 @@ func (g *URLTestGroup) Select(network string) (adapter.Outbound, bool) {
  	return minOutbound, true
  }
  
@@ -2784,7 +2823,7 @@ index 46049d2..91e701d 100644
  func (g *URLTestGroup) loopCheck(ticker *time.Ticker, closeChan <-chan struct{}) {
  	if time.Since(g.lastActive.Load()) > g.interval {
  		g.lastActive.Store(time.Now())
-@@ -395,11 +406,6 @@ func (g *URLTestGroup) urlTest(ctx context.Context, force bool) (map[string]uint
+@@ -409,11 +420,6 @@ func (g *URLTestGroup) urlTest(ctx context.Context, force bool) (map[string]uint
  	return result, nil
  }
  
@@ -2796,7 +2835,7 @@ index 46049d2..91e701d 100644
  type urlTestBatch struct {
  	ctx      context.Context
  	outbound adapter.OutboundManager
-@@ -465,33 +471,21 @@ func (b *urlTestBatch) test(outbounds []adapter.Outbound, link string, interval
+@@ -489,35 +495,23 @@ func (b *urlTestBatch) test(outbounds []adapter.Outbound, link string, interval
  			}
  			b.checked[tag] = true
  			b.batch.Go(tag, func() (any, error) {
@@ -2821,16 +2860,18 @@ index 46049d2..91e701d 100644
  					}
 -					b.logger.Debug("outbound ", tag, " unavailable: ", testResult.err)
 +					b.logger.Debug("outbound ", tag, " unavailable: ", testErr)
- 					b.history.DeleteURLTestHistory(tag)
+ 					b.access.Lock()
+ 					b.deleted = append(b.deleted, tag)
+ 					b.access.Unlock()
  				} else {
 -					b.logger.Debug("outbound ", tag, " available: ", testResult.delay, "ms")
 +					b.logger.Debug("outbound ", tag, " available: ", delay, "ms")
- 					b.history.StoreURLTestHistory(tag, &adapter.URLTestHistory{
+ 					b.access.Lock()
+ 					b.stored[tag] = &adapter.URLTestHistory{
  						Time:  time.Now(),
 -						Delay: testResult.delay,
 +						Delay: delay,
- 					})
- 					b.access.Lock()
+ 					}
 -					b.result[tag] = testResult.delay
 +					b.result[tag] = delay
  					b.access.Unlock()
@@ -2986,10 +3027,10 @@ index 0000000..7e3519c
 +	}
 +}
 diff --git a/route/route.go b/route/route.go
-index bf25bae..14adab4 100644
+index 282543f..3114165 100644
 --- a/route/route.go
 +++ b/route/route.go
-@@ -161,6 +161,7 @@ func (r *Router) routeConnection(ctx context.Context, conn net.Conn, metadata ad
+@@ -158,6 +158,7 @@ func (r *Router) routeConnection(ctx context.Context, conn net.Conn, metadata ad
  	}
  	metadata.RouteOutbound = selectedOutbound.Tag()
  	metadata.OutboundChain = chain
@@ -2997,7 +3038,7 @@ index bf25bae..14adab4 100644
  	for _, tracker := range r.trackers {
  		conn = tracker.RoutedConnection(ctx, conn, metadata, selectedRule, selectedOutbound)
  	}
-@@ -327,6 +328,7 @@ func (r *Router) routePacketConnection(ctx context.Context, conn N.PacketConn, m
+@@ -317,6 +318,7 @@ func (r *Router) routePacketConnection(ctx context.Context, conn N.PacketConn, m
  	}
  	metadata.RouteOutbound = selectedOutbound.Tag()
  	metadata.OutboundChain = chain
@@ -3005,7 +3046,7 @@ index bf25bae..14adab4 100644
  	for _, tracker := range r.trackers {
  		conn = tracker.RoutedPacketConnection(ctx, conn, metadata, selectedRule, selectedOutbound)
  	}
-@@ -496,6 +498,9 @@ func (r *Router) preMatchFlow(ctx context.Context, metadata *adapter.InboundCont
+@@ -479,6 +481,9 @@ func (r *Router) preMatchFlow(ctx context.Context, metadata *adapter.InboundCont
  		return continueResult
  	}
  	outbound = chain[len(chain)-1]
@@ -3016,10 +3057,10 @@ index bf25bae..14adab4 100644
  	if !isFlowOutbound {
  		return continueResult
 diff --git a/route/router.go b/route/router.go
-index 0673dde..3f2554a 100644
+index c10f121..ab3258c 100644
 --- a/route/router.go
 +++ b/route/router.go
-@@ -9,6 +9,7 @@ import (
+@@ -12,6 +12,7 @@ import (
  	"github.com/sagernet/sing-box/adapter"
  	"github.com/sagernet/sing-box/common/process"
  	"github.com/sagernet/sing-box/common/taskmonitor"
@@ -3027,15 +3068,15 @@ index 0673dde..3f2554a 100644
  	C "github.com/sagernet/sing-box/constant"
  	"github.com/sagernet/sing-box/log"
  	"github.com/sagernet/sing-box/option"
-@@ -32,6 +33,7 @@ type Router struct {
- 	dns               adapter.DNSRouter
- 	dnsTransport      adapter.DNSTransportManager
- 	connection        adapter.ConnectionManager
-+	urlTestHistory    *urltest.HistoryStorage
- 	network           adapter.NetworkManager
- 	httpClientManager adapter.HTTPClientManager
- 	rules             []adapter.Rule
-@@ -58,6 +60,7 @@ func NewRouter(ctx context.Context, logFactory log.Factory, options option.Route
+@@ -35,6 +36,7 @@ type Router struct {
+ 	dns                          adapter.DNSRouter
+ 	dnsTransport                 adapter.DNSTransportManager
+ 	connection                   adapter.ConnectionManager
++	urlTestHistory               *urltest.HistoryStorage
+ 	network                      adapter.NetworkManager
+ 	httpClientManager            adapter.HTTPClientManager
+ 	rules                        []adapter.Rule
+@@ -65,6 +67,7 @@ func NewRouter(ctx context.Context, logFactory log.Factory, options option.Route
  		dns:               service.FromContext[adapter.DNSRouter](ctx),
  		dnsTransport:      service.FromContext[adapter.DNSTransportManager](ctx),
  		connection:        service.FromContext[adapter.ConnectionManager](ctx),

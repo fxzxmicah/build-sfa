@@ -35,6 +35,10 @@ jobs:
               "https://raw.githubusercontent.com/SagerNet/sing-box/$SING_BOX_TAG/$file" \
               --output "$RUNNER_TEMP/toolchain/${file##*/}"
           done
+          for patch in patches/sing-box/*.patch; do
+            git -C "$RUNNER_TEMP/toolchain" apply \
+              --include=go.mod --include=go.sum "$GITHUB_WORKSPACE/$patch"
+          done
           printf '%s' "$ANDROID_KEYSTORE_BASE64" |
             base64 --decode > "$RUNNER_TEMP/release.keystore"
           {
@@ -48,7 +52,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: ${{ steps.build.outputs.toolchain }}/go.mod
           cache-dependency-path: ${{ steps.build.outputs.toolchain }}/go.sum

@@ -1,0 +1,499 @@
+From 0b0f90fb4a01210cafd7393c026bd010354b082d Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=E4=B8=96=E7=95=8C?= <i@sekai.icu>
+Date: Fri, 27 Nov 2026 19:35:40 +0800
+Subject: [PATCH] Update Go to 1.26.11
+
+(cherry picked from commit 1070f8f5005d3ed802b20f1a2e5be8eb0ba0fa76)
+---
+ .github/go_ios_cpu_features.patch           |  4 +-
+ .github/go_windows_arm64_cpu_features.patch | 94 +++++++++++++++++++++
+ .github/patch_go_for_windows_arm64.sh       | 31 +++++++
+ .github/setup_go_for_macos1013.sh           | 17 ++--
+ .github/setup_go_for_windows7.sh            | 28 +++---
+ .github/workflows/build.yml                 | 38 +++++----
+ .github/workflows/docker.yml                |  2 +-
+ .github/workflows/lint.yml                  |  2 +-
+ .github/workflows/linux.yml                 |  4 +-
+ .github/workflows/test.yml                  |  2 +-
+ Dockerfile                                  |  2 +-
+ clients/android                             |  2 +-
+ clients/desktop                             |  2 +-
+ 13 files changed, 179 insertions(+), 49 deletions(-)
+ create mode 100644 .github/go_windows_arm64_cpu_features.patch
+ create mode 100755 .github/patch_go_for_windows_arm64.sh
+
+diff --git a/.github/go_ios_cpu_features.patch b/.github/go_ios_cpu_features.patch
+index 52231b1..704d2d7 100644
+--- a/.github/go_ios_cpu_features.patch
++++ b/.github/go_ios_cpu_features.patch
+@@ -21,8 +21,8 @@
+  // Use of this source code is governed by a BSD-style
+  // license that can be found in the LICENSE file.
+  
+--//go:build arm64 && !linux && !freebsd && !android && (!darwin || ios) && !openbsd && !windows
+-+//go:build arm64 && !linux && !freebsd && !android && !darwin && !openbsd && !windows
++-//go:build arm64 && !linux && !freebsd && !android && (!darwin || ios) && !openbsd
+++//go:build arm64 && !linux && !freebsd && !android && !darwin && !openbsd
+  
+  package cpu
+  
+diff --git a/.github/go_windows_arm64_cpu_features.patch b/.github/go_windows_arm64_cpu_features.patch
+new file mode 100644
+index 0000000..7c62dca
+--- /dev/null
++++ b/.github/go_windows_arm64_cpu_features.patch
+@@ -0,0 +1,94 @@
++--- a/src/internal/cpu/cpu_arm64_other.go
+++++ b/src/internal/cpu/cpu_arm64_other.go
++@@ -2,7 +2,7 @@
++ // Use of this source code is governed by a BSD-style
++ // license that can be found in the LICENSE file.
++ 
++-//go:build arm64 && !linux && !freebsd && !android && (!darwin || ios) && !openbsd
+++//go:build arm64 && !linux && !freebsd && !android && (!darwin || ios) && !openbsd && !windows
++ 
++ package cpu
++ 
++--- a/src/internal/cpu/cpu_arm64_windows.go
+++++ b/src/internal/cpu/cpu_arm64_windows.go
++@@ -0,0 +1,26 @@
+++// Copyright 2026 The Go Authors. All rights reserved.
+++// Use of this source code is governed by a BSD-style
+++// license that can be found in the LICENSE file.
+++
+++//go:build arm64
+++
+++package cpu
+++
+++func osInit() {
+++	// TODO(brainman): we don't know how to retrieve those bits form user space - leaving them as false for now
+++	// https://github.com/golang/go/issues/76791#issuecomment-3877873959
+++	ARM64.HasCPUID = false
+++	ARM64.HasDIT = false
+++	ARM64.IsNeoverse = false
+++
+++	if isProcessorFeaturePresent(_PF_ARM_V8_CRYPTO_INSTRUCTIONS_AVAILABLE) {
+++		ARM64.HasAES = true
+++		ARM64.HasPMULL = true
+++		ARM64.HasSHA1 = true
+++		ARM64.HasSHA2 = true
+++	}
+++	ARM64.HasSHA3 = isProcessorFeaturePresent(_PF_ARM_SHA3_INSTRUCTIONS_AVAILABLE)
+++	ARM64.HasCRC32 = isProcessorFeaturePresent(_PF_ARM_V8_CRC32_INSTRUCTIONS_AVAILABLE)
+++	ARM64.HasSHA512 = isProcessorFeaturePresent(_PF_ARM_SHA512_INSTRUCTIONS_AVAILABLE)
+++	ARM64.HasATOMICS = isProcessorFeaturePresent(_PF_ARM_V81_ATOMIC_INSTRUCTIONS_AVAILABLE)
+++}
++--- a/src/internal/cpu/cpu_windows.go
+++++ b/src/internal/cpu/cpu_windows.go
++@@ -0,0 +1,20 @@
+++// Copyright 2026 The Go Authors. All rights reserved.
+++// Use of this source code is governed by a BSD-style
+++// license that can be found in the LICENSE file.
+++
+++package cpu
+++
+++import _ "unsafe" // for linkname
+++
+++const (
+++	_PF_ARM_V8_CRYPTO_INSTRUCTIONS_AVAILABLE  = 30
+++	_PF_ARM_V8_CRC32_INSTRUCTIONS_AVAILABLE   = 31
+++	_PF_ARM_V81_ATOMIC_INSTRUCTIONS_AVAILABLE = 34
+++	_PF_ARM_SHA3_INSTRUCTIONS_AVAILABLE       = 64
+++	_PF_ARM_SHA512_INSTRUCTIONS_AVAILABLE     = 65
+++)
+++
+++// isProcessorFeaturePresent calls windows IsProcessorFeaturePresent API.
+++//
+++//go:linkname isProcessorFeaturePresent
+++func isProcessorFeaturePresent(processorFeature uint32) bool // Implemented in runtime package.
++--- a/src/runtime/os_windows.go
+++++ b/src/runtime/os_windows.go
++@@ -39,6 +39,7 @@ const (
++ //go:cgo_import_dynamic runtime._GetSystemDirectoryA GetSystemDirectoryA%2 "kernel32.dll"
++ //go:cgo_import_dynamic runtime._GetSystemInfo GetSystemInfo%1 "kernel32.dll"
++ //go:cgo_import_dynamic runtime._GetThreadContext GetThreadContext%2 "kernel32.dll"
+++//go:cgo_import_dynamic runtime._IsProcessorFeaturePresent IsProcessorFeaturePresent%1 "kernel32.dll"
++ //go:cgo_import_dynamic runtime._SetThreadContext SetThreadContext%2 "kernel32.dll"
++ //go:cgo_import_dynamic runtime._LoadLibraryExW LoadLibraryExW%3 "kernel32.dll"
++ //go:cgo_import_dynamic runtime._PostQueuedCompletionStatus PostQueuedCompletionStatus%4 "kernel32.dll"
++@@ -96,6 +97,7 @@ var (
++ 	_GetSystemDirectoryA,
++ 	_GetSystemInfo,
++ 	_GetThreadContext,
+++	_IsProcessorFeaturePresent,
++ 	_SetThreadContext,
++ 	_LoadLibraryExW,
++ 	_PostQueuedCompletionStatus,
++@@ -261,6 +263,12 @@ func windows_QueryPerformanceFrequency() int64 {
++ 	return frequency
++ }
++ 
+++//go:linkname cpu_isProcessorFeaturePresent internal/cpu.isProcessorFeaturePresent
+++func cpu_isProcessorFeaturePresent(processorFeature uint32) bool {
+++	ret := stdcall(_IsProcessorFeaturePresent, uintptr(processorFeature))
+++	return ret != 0
+++}
+++
++ func loadOptionalSyscalls() {
++ 	bcryptPrimitives := windowsLoadSystemLib(bcryptprimitivesdll[:])
++ 	if bcryptPrimitives == 0 {
+diff --git a/.github/patch_go_for_windows_arm64.sh b/.github/patch_go_for_windows_arm64.sh
+new file mode 100755
+index 0000000..dfb5f07
+--- /dev/null
++++ b/.github/patch_go_for_windows_arm64.sh
+@@ -0,0 +1,31 @@
++#!/usr/bin/env bash
++
++set -euo pipefail
++
++# Go's internal/cpu never detects ARM64 features on windows/arm64 before Go 1.27,
++# so crypto/aes, AES-GCM and crypto/sha256 use their generic implementations.
++# Backport of https://go.dev/cl/745560 (golang/go#76791).
++#
++# Remove once the Go release used by the Windows builds includes the fix.
++
++export GOTOOLCHAIN=local
++
++GOROOT="$(go env GOROOT)"
++PATCH_FILE="$(cd "$(dirname "$0")" && pwd)/go_windows_arm64_cpu_features.patch"
++
++cd "$GOROOT"
++if [[ -f src/internal/cpu/cpu_arm64_windows.go ]]; then
++  echo "already patched"
++else
++  patch --verbose -p1 < "$PATCH_FILE"
++fi
++
++CPU_FILES="$(GOOS=windows GOARCH=arm64 CGO_ENABLED=0 go list -f '{{.GoFiles}}' internal/cpu)"
++echo "internal/cpu files for windows/arm64: $CPU_FILES"
++case "$CPU_FILES" in
++*cpu_arm64_windows.go*) ;;
++*)
++  echo "patch is not effective" >&2
++  exit 1
++  ;;
++esac
+diff --git a/.github/setup_go_for_macos1013.sh b/.github/setup_go_for_macos1013.sh
+index 61893c5..a9787e6 100755
+--- a/.github/setup_go_for_macos1013.sh
++++ b/.github/setup_go_for_macos1013.sh
+@@ -2,10 +2,11 @@
+ 
+ set -euo pipefail
+ 
+-VERSION="1.27.4"
++VERSION="1.26.11"
+ PATCH_COMMITS=(
+-  "042f409b154a743972239baefcfc400d5ff33de5"
+-  "d6ea9ffecf266da2d2793b635a07e7db60a3adaf"
++  "f080b0c6346eb690c0dc82497b35925f385b35ac"
++  "2d9c12887c342fb9051d231aa5388743cb7e9cb6"
++  "367663849c656612fc3c8875ef6e7f6b0c93dbd0"
+ )
+ CURL_ARGS=(
+   -fL
+@@ -25,13 +26,13 @@ tar -xzf "go${VERSION}.darwin-arm64.tar.gz"
+ mv go go_osx
+ cd go_osx
+ 
+-# these patch URLs only work on golang1.27.x
+-# that means after golang1.28 release it must be changed
+-# see: https://github.com/SagerNet/go/commits/release-branch.go1.27/
++# these patch URLs only work on golang1.26.x
++# that means after golang1.27 release it must be changed
++# see: https://github.com/SagerNet/go/commits/release-branch.go1.26/
+ # revert:
++# 33d3f603c1: "cmd/link/internal/ld: use 12.0.0 OS/SDK versions for macOS linking"
+ # 937368f84e: "crypto/x509: change how we retrieve chains on darwin"
+-# fixes:
+-# d6ea9ffecf: "cmd/link: lower default macOS version to 10.13"
++# d90a57ffe8: "cmd/link/internal/ld: unify OS/SDK versions for macOS linking"
+ 
+ for patch_commit in "${PATCH_COMMITS[@]}"; do
+   curl "${CURL_ARGS[@]}" "https://github.com/SagerNet/go/commit/${patch_commit}.diff" | patch --verbose -p 1
+diff --git a/.github/setup_go_for_windows7.sh b/.github/setup_go_for_windows7.sh
+index fc471f6..63def3f 100755
+--- a/.github/setup_go_for_windows7.sh
++++ b/.github/setup_go_for_windows7.sh
+@@ -2,15 +2,14 @@
+ 
+ set -euo pipefail
+ 
+-VERSION="1.27.4"
++VERSION="1.26.11"
+ PATCH_COMMITS=(
+-  "5bea096a8d38bcc2f7b29a423a2d7a677e7257b4"
+-  "2fd9d96c8897586872cf00e335dad7d0e2d32601"
+-  "51cbeef333241001a1106fbeeb7c7ef80054dac2"
+-  "4fd81ff5c9844620e836e8d2052e082ac26484f0"
+-  "2924464d68627505f876d4d275bf8432dbf81da5"
+-  "5c36850df445d11d557c3d995e15a3ac159749ea"
+-  "51c81072acbed32e4331026bc6ca308a3a495039"
++  "a4ae550aa148b04c9d4890e98bee63aede5c4b53"
++  "95b851f661584711faa8115b3234a461044f4510"
++  "b0bf0a863cf218b9bb0d6c013903ab160ae0c39b"
++  "7c7a2a0d68920f8764d9a3aeae7ad1067a17b3fa"
++  "ba34356e82f3c12a7303d2231e6ea0e42bbbb3bf"
++  "472a88edbc2a42feb53fa31d29ab54d33840dca6"
+ )
+ CURL_ARGS=(
+   -fL
+@@ -30,21 +29,18 @@ mv go go_win7
+ cd go_win7
+ 
+ # modify from https://github.com/restic/restic/issues/4636#issuecomment-1896455557
+-# these patch URLs only work on golang1.27.x
+-# that means after golang1.28 release it must be changed
+-# see: https://github.com/MetaCubeX/go/commits/release-branch.go1.27/
++# these patch URLs only work on golang1.26.x
++# that means after golang1.27 release it must be changed
++# see: https://github.com/MetaCubeX/go/commits/release-branch.go1.26/
+ # revert:
+-# 341b5e2c0261cc059b157f1c7a2a2c4d1f417f0d: "cmd/link: raise minimum windows version to 10"
+ # 693def151adff1af707d82d28f55dba81ceb08e1: "crypto/rand,runtime: switch RtlGenRandom for ProcessPrng"
+ # 7c1157f9544922e96945196b47b95664b1e39108: "net: remove sysSocket fallback for Windows 7"
+ # 48042aa09c2f878c4faa576948b07fe625c4707a: "syscall: remove Windows 7 console handle workaround"
+ # a17d959debdb04cd550016a3501dd09d50cd62e7: "runtime: always use LoadLibraryEx to load system libraries"
+ # fixes:
+-# 5c36850df445d11d557c3d995e15a3ac159749ea: "Fix os.RemoveAll not working on Windows7"
+-# 51c81072acbed32e4331026bc6ca308a3a495039: "Revert \"os: remove 5ms sleep on Windows in (*Process).Wait\""
++# bed309eff415bcb3c77dd4bc3277b682b89a388d: "Fix os.RemoveAll not working on Windows7"
++# 34b899c2fb39b092db4fa67c4417e41dc046be4b: "Revert \"os: remove 5ms sleep on Windows in (*Process).Wait\""
+ 
+ for patch_commit in "${PATCH_COMMITS[@]}"; do
+   curl "${CURL_ARGS[@]}" "https://github.com/MetaCubeX/go/commit/${patch_commit}.diff" | patch --verbose -p 1
+ done
+-
+-GOTOOLCHAIN=local ./bin/go install cmd/link
+diff --git a/.github/workflows/build.yml b/.github/workflows/build.yml
+index 7a65ade..bbc8f28 100644
+--- a/.github/workflows/build.yml
++++ b/.github/workflows/build.yml
+@@ -54,7 +54,7 @@ jobs:
+       - name: Setup Go
+         uses: actions/setup-go@v5
+         with:
+-          go-version: 1.27.4
++          go-version: 1.26.11
+           cache: false
+       - name: Cache Go modules
+         uses: actions/cache/restore@v4
+@@ -145,7 +145,7 @@ jobs:
+         if: ${{ ! matrix.legacy_win7 }}
+         uses: actions/setup-go@v5
+         with:
+-          go-version: 1.27.4
++          go-version: 1.26.11
+           cache: false
+       - name: Cache Go modules
+         uses: actions/cache/restore@v4
+@@ -160,7 +160,7 @@ jobs:
+         with:
+           path: |
+             ~/go/go_win7
+-          key: go_win7_1274
++          key: go_win7_12611
+       - name: Setup Go for Windows 7
+         if: matrix.legacy_win7 && steps.cache-go-for-windows7.outputs.cache-hit != 'true'
+         env:
+@@ -490,7 +490,7 @@ jobs:
+         if: ${{ ! matrix.legacy_osx }}
+         uses: actions/setup-go@v5
+         with:
+-          go-version: 1.27.4
++          go-version: 1.26.11
+           cache: false
+       - name: Cache Go modules
+         uses: actions/cache/restore@v4
+@@ -505,7 +505,7 @@ jobs:
+         with:
+           path: |
+             ~/go/go_osx
+-          key: go_osx_1274
++          key: go_osx_12611
+       - name: Setup Go for macOS 10.13
+         if: matrix.legacy_osx && steps.cache-go-for-macos1013.outputs.cache-hit != 'true'
+         env:
+@@ -589,8 +589,12 @@ jobs:
+       - name: Setup Go
+         uses: actions/setup-go@v5
+         with:
+-          go-version: 1.27.4
++          go-version: 1.26.11
+           cache: false
++      - name: Patch Go for Windows ARM64
++        if: matrix.arch == 'arm64'
++        shell: bash
++        run: .github/patch_go_for_windows_arm64.sh
+       - name: Cache Go modules
+         uses: actions/cache@v4
+         with:
+@@ -692,7 +696,7 @@ jobs:
+       - name: Setup Go
+         uses: actions/setup-go@v5
+         with:
+-          go-version: 1.27.4
++          go-version: 1.26.11
+           cache: false
+       - name: Cache Go modules
+         uses: actions/cache@v4
+@@ -756,7 +760,7 @@ jobs:
+       - name: Setup Go
+         uses: actions/setup-go@v5
+         with:
+-          go-version: 1.27.4
++          go-version: 1.26.11
+           cache: false
+       - name: Cache Go modules
+         uses: actions/cache/restore@v4
+@@ -864,7 +868,7 @@ jobs:
+       - name: Setup Go
+         uses: actions/setup-go@v5
+         with:
+-          go-version: 1.27.4
++          go-version: 1.26.11
+           cache: false
+       - name: Cache Go modules
+         uses: actions/cache/restore@v4
+@@ -977,8 +981,12 @@ jobs:
+       - name: Setup Go
+         uses: actions/setup-go@v5
+         with:
+-          go-version: 1.27.4
++          go-version: 1.26.11
+           cache: false
++      - name: Patch Go for Windows ARM64
++        if: matrix.desktop_arch == 'arm64'
++        shell: bash
++        run: .github/patch_go_for_windows_arm64.sh
+       - name: Cache Go modules
+         uses: actions/cache@v4
+         with:
+@@ -1089,7 +1097,7 @@ jobs:
+       - name: Setup Go
+         uses: actions/setup-go@v5
+         with:
+-          go-version: 1.27.4
++          go-version: 1.26.11
+           cache: false
+       - name: Cache Go modules
+         uses: actions/cache@v4
+@@ -1263,7 +1271,7 @@ jobs:
+         if: matrix.build
+         uses: actions/setup-go@v5
+         with:
+-          go-version: 1.27.4
++          go-version: 1.26.11
+           cache: false
+       - name: Patch Go for iOS
+         if: matrix.build && (matrix.platform == 'ios/arm64' || matrix.platform == 'tvos/arm64')
+@@ -1280,8 +1288,8 @@ jobs:
+         uses: actions/cache@v4
+         with:
+           path: ~/Library/Caches/go-build
+-          key: libbox-go-build-${{ matrix.artifact }}-1.27.4-${{ hashFiles('go.sum') }}
+-          restore-keys: libbox-go-build-${{ matrix.artifact }}-1.27.4-
++          key: libbox-go-build-${{ matrix.artifact }}-1.26.11-${{ hashFiles('go.sum') }}
++          restore-keys: libbox-go-build-${{ matrix.artifact }}-1.26.11-
+       - name: Set tag
+         if: matrix.build
+         run: git tag v${{ needs.calculate_version.outputs.version }} -f
+@@ -1350,7 +1358,7 @@ jobs:
+         if: matrix.if
+         uses: actions/setup-go@v5
+         with:
+-          go-version: 1.27.4
++          go-version: 1.26.11
+           cache: false
+       - name: Cache Go modules
+         if: matrix.if
+diff --git a/.github/workflows/docker.yml b/.github/workflows/docker.yml
+index 2c9e935..3f7de53 100644
+--- a/.github/workflows/docker.yml
++++ b/.github/workflows/docker.yml
+@@ -55,7 +55,7 @@ jobs:
+       - name: Setup Go
+         uses: actions/setup-go@v5
+         with:
+-          go-version: 1.27.4
++          go-version: 1.26.11
+       - name: Clone cronet-go
+         if: matrix.naive
+         run: |
+diff --git a/.github/workflows/lint.yml b/.github/workflows/lint.yml
+index a965995..83abc67 100644
+--- a/.github/workflows/lint.yml
++++ b/.github/workflows/lint.yml
+@@ -60,7 +60,7 @@ jobs:
+       - name: Setup Go
+         uses: actions/setup-go@v5
+         with:
+-          go-version: ^1.27
++          go-version: ^1.26
+       - name: Cache go module
+         uses: actions/cache@v4
+         with:
+diff --git a/.github/workflows/linux.yml b/.github/workflows/linux.yml
+index a03d2eb..53012b4 100644
+--- a/.github/workflows/linux.yml
++++ b/.github/workflows/linux.yml
+@@ -29,7 +29,7 @@ jobs:
+       - name: Setup Go
+         uses: actions/setup-go@v5
+         with:
+-          go-version: 1.27.4
++          go-version: 1.26.11
+       - name: Check input version
+         if: github.event_name == 'workflow_dispatch'
+         run: |-
+@@ -72,7 +72,7 @@ jobs:
+       - name: Setup Go
+         uses: actions/setup-go@v5
+         with:
+-          go-version: 1.27.4
++          go-version: 1.26.11
+       - name: Clone cronet-go
+         if: matrix.naive
+         run: |
+diff --git a/.github/workflows/test.yml b/.github/workflows/test.yml
+index e544907..66a66a0 100644
+--- a/.github/workflows/test.yml
++++ b/.github/workflows/test.yml
+@@ -33,8 +33,8 @@ jobs:
+           - windows-latest
+           - macos-latest
+         go:
++          - ~1.25
+           - ~1.26
+-          - ~1.27
+     runs-on: ${{ matrix.os }}
+     steps:
+       - name: Checkout
+diff --git a/Dockerfile b/Dockerfile
+index f12d526..54c606e 100644
+--- a/Dockerfile
++++ b/Dockerfile
+@@ -1,4 +1,4 @@
+-FROM --platform=$BUILDPLATFORM golang:1.27-alpine AS builder
++FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS builder
+ LABEL maintainer="nekohasekai <contact-git@sekai.icu>"
+ COPY . /go/src/github.com/sagernet/sing-box
+ WORKDIR /go/src/github.com/sagernet/sing-box
+diff --git a/clients/android b/clients/android
+index 886ee92..a4925dc 160000
+--- a/clients/android
++++ b/clients/android
+@@ -1 +1 @@
+-Subproject commit 886ee92cc452b053338c349065de0b567d199f4a
++Subproject commit a4925dcc2d588e7e4ce1c24c15e0421968f61be5
+diff --git a/clients/desktop b/clients/desktop
+index cfde874..8526cb6 160000
+--- a/clients/desktop
++++ b/clients/desktop
+@@ -1 +1 @@
+-Subproject commit cfde874386d02122aa9acf4743aa7331fb3135c9
++Subproject commit 8526cb636feb122d43bc168136a8695b1cc4fd13
+-- 
+2.56.0
+

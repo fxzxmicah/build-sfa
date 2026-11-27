@@ -1,12 +1,12 @@
-From 9b57b23f7129ad57471581cced3e9e120d74be3e Mon Sep 17 00:00:00 2001
+From 0ccddc75812c87067b90f517a928d85f7bc81383 Mon Sep 17 00:00:00 2001
 From: Fxzx micah <48860358+fxzxmicah@users.noreply.github.com>
 Date: Fri, 27 Nov 2026 00:00:02 +0800
 Subject: [PATCH] dashboard: show outbound IP stack availability
 
 ---
- .../nekohasekai/sfa/compose/model/Groups.kt   | 26 +++++++++++++
- .../compose/screen/dashboard/GroupsCard.kt    | 39 ++++++++++++++-----
- 2 files changed, 55 insertions(+), 10 deletions(-)
+ .../nekohasekai/sfa/compose/model/Groups.kt   | 26 +++++++++++
+ .../compose/screen/dashboard/GroupsCard.kt    | 44 ++++++++++++++-----
+ 2 files changed, 58 insertions(+), 12 deletions(-)
 
 diff --git a/app/src/main/java/io/nekohasekai/sfa/compose/model/Groups.kt b/app/src/main/java/io/nekohasekai/sfa/compose/model/Groups.kt
 index c869065..48e1233 100644
@@ -56,7 +56,7 @@ index c869065..48e1233 100644
      val list = mutableListOf<OutboundGroupItem>()
      while (hasNext()) {
 diff --git a/app/src/main/java/io/nekohasekai/sfa/compose/screen/dashboard/GroupsCard.kt b/app/src/main/java/io/nekohasekai/sfa/compose/screen/dashboard/GroupsCard.kt
-index 02377a3..dc345c4 100644
+index 38a7bac..5ddaa4d 100644
 --- a/app/src/main/java/io/nekohasekai/sfa/compose/screen/dashboard/GroupsCard.kt
 +++ b/app/src/main/java/io/nekohasekai/sfa/compose/screen/dashboard/GroupsCard.kt
 @@ -73,6 +73,7 @@ import io.nekohasekai.sfa.compat.rememberOverscrollEffectCompat
@@ -67,8 +67,8 @@ index 02377a3..dc345c4 100644
  import io.nekohasekai.sfa.compose.screen.dashboard.groups.GroupsUiState
  import io.nekohasekai.sfa.compose.screen.dashboard.groups.GroupsViewModel
  import io.nekohasekai.sfa.compose.theme.LocalStatusColors
-@@ -595,16 +596,34 @@ private fun ProxyChip(
-                     horizontalArrangement = Arrangement.SpaceBetween,
+@@ -596,19 +597,38 @@ private fun ProxyChip(
+                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                      verticalAlignment = Alignment.CenterVertically,
                  ) {
 -                    Text(
@@ -76,12 +76,15 @@ index 02377a3..dc345c4 100644
 -                        style = MaterialTheme.typography.labelSmall,
 -                        color =
 -                        if (isSelected) {
--                            MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+-                            MaterialTheme.colorScheme.onPrimaryContainer
 -                        } else {
 -                            MaterialTheme.colorScheme.onSurfaceVariant
 -                        },
--                    )
+-                        maxLines = 1,
+-                        overflow = TextOverflow.Ellipsis,
 +                    Row(
+                         modifier = Modifier.weight(1f),
+-                    )
 +                        horizontalArrangement = Arrangement.spacedBy(4.dp),
 +                        verticalAlignment = Alignment.CenterVertically,
 +                    ) {
@@ -90,10 +93,13 @@ index 02377a3..dc345c4 100644
 +                            style = MaterialTheme.typography.labelSmall,
 +                            color =
 +                            if (isSelected) {
-+                                MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
++                                MaterialTheme.colorScheme.onPrimaryContainer
 +                            } else {
 +                                MaterialTheme.colorScheme.onSurfaceVariant
 +                            },
++                            maxLines = 1,
++                            overflow = TextOverflow.Ellipsis,
++                            modifier = Modifier.weight(1f, fill = false),
 +                        )
 +                        listOf(item.ipv4, item.ipv6).forEach { status ->
 +                            val color = when (status) {

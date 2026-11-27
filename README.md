@@ -10,8 +10,8 @@ Edit `config.env` to select the upstream tag, libbox tags, Android flavor, and
 build type. `SING_BOX_TAG` is the only manually maintained version.
 
 The Android client comes from upstream `main` and must declare the same version
-as the selected sing-box tag. Go modules and Gomobile follow that tag's
-`go.mod`.
+as the selected sing-box tag. Go modules and Gomobile follow the patched
+sing-box source's `go.mod`.
 
 Android `main` can change without a version bump. Its patches must be rebased
 when upstream changes; matching version names alone do not pin the source.
@@ -31,8 +31,9 @@ UI are not compiled; Ghostty dependencies are included only with Tailscale.
 ## Local Build
 
 Prepare a Linux build environment with Git, Go, Java 17, the Android SDK/NDK,
-and standard GNU command-line tools. Use the Go version from the selected
-upstream tag's `go.mod` and the NDK release from
+and standard GNU command-line tools. Enable Go's automatic toolchain selection;
+the patched source's `go.mod` declares its minimum and preferred toolchains.
+Use the NDK release from
 `.github/workflows/build.yml` in that tag. Gradle uses the Android client's
 wrapper; no separate Gradle installation is needed.
 

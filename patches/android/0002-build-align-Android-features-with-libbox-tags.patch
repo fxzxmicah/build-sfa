@@ -1,4 +1,4 @@
-From 06fb8c74a45c2df2061ab72470bc014d5c0da846 Mon Sep 17 00:00:00 2001
+From 49d4626343174fe98d0855ebd79064907716983a Mon Sep 17 00:00:00 2001
 From: Fxzx micah <48860358+fxzxmicah@users.noreply.github.com>
 Date: Wed, 2 Sep 2026 03:07:50 +0800
 Subject: [PATCH] build: align Android features with libbox tags
@@ -1104,10 +1104,10 @@ index 0000000..a38b7ca
 +@Composable
 +fun rememberUSBIPFeature(): AppFeature = EmptyFeature
 diff --git a/app/src/main/AndroidManifest.xml b/app/src/main/AndroidManifest.xml
-index 08295b0..15534a8 100644
+index bdf7c9d..3024ec7 100644
 --- a/app/src/main/AndroidManifest.xml
 +++ b/app/src/main/AndroidManifest.xml
-@@ -117,11 +117,13 @@
+@@ -121,11 +121,13 @@
          </activity>
          <activity
              android:name=".compose.ShareActivity"
@@ -1122,7 +1122,7 @@ index 08295b0..15534a8 100644
              <intent-filter>
                  <action android:name="android.intent.action.SEND" />
                  <action android:name="android.intent.action.SEND_MULTIPLE" />
-@@ -167,16 +169,20 @@
+@@ -184,16 +186,20 @@
          </service>
          <service
              android:name=".bg.USBIPService"
@@ -1185,7 +1185,7 @@ index a02aac1..615486f 100644
  
          if (Vendor.isPerAppProxyAvailable()) {
 diff --git a/app/src/main/java/io/nekohasekai/sfa/compose/MainActivity.kt b/app/src/main/java/io/nekohasekai/sfa/compose/MainActivity.kt
-index 3999e3f..cccb542 100644
+index 2519026..bd07897 100644
 --- a/app/src/main/java/io/nekohasekai/sfa/compose/MainActivity.kt
 +++ b/app/src/main/java/io/nekohasekai/sfa/compose/MainActivity.kt
 @@ -34,8 +34,6 @@ import androidx.compose.foundation.layout.height
@@ -1227,7 +1227,7 @@ index 3999e3f..cccb542 100644
  import io.nekohasekai.sfa.compose.theme.Theme
  import io.nekohasekai.sfa.compose.topbar.LocalScaffoldPadding
  import io.nekohasekai.sfa.compose.topbar.LocalTopBarController
-@@ -270,15 +263,9 @@ class MainActivity :
+@@ -278,15 +271,9 @@ class MainActivity :
              pendingNavigationRoute.value = "settings/privilege"
          }
          val uri = intent.data ?: return
@@ -1246,7 +1246,7 @@ index 3999e3f..cccb542 100644
          }
          if (intent.action == Action.OPEN_URL) {
              launchCustomTab(uri.toString())
-@@ -862,66 +849,15 @@ class MainActivity :
+@@ -855,66 +842,15 @@ class MainActivity :
                  null
              }
  
@@ -1318,7 +1318,7 @@ index 3999e3f..cccb542 100644
              }
          }
          val showGroupsInNav = dashboardUiState.hasGroups
-@@ -1040,11 +976,7 @@ class MainActivity :
+@@ -1033,11 +969,7 @@ class MainActivity :
                          logViewModel = logViewModel,
                          groupsViewModel = groupsViewModel,
                          connectionsViewModel = connectionsViewModel,
@@ -1331,7 +1331,7 @@ index 3999e3f..cccb542 100644
                          modifier = Modifier.fillMaxSize(),
                      )
                      if (!useNavigationRail) {
-@@ -1228,7 +1160,8 @@ class MainActivity :
+@@ -1221,7 +1153,8 @@ class MainActivity :
          val powerReportUnreadCount by PowerReportManager.unreadCount.collectAsState()
          // The crash/OOM report entries are hidden in remote control mode.
          val toolsUnreadCount =
@@ -1341,7 +1341,7 @@ index 3999e3f..cccb542 100644
  
          LaunchedEffect(Unit) {
              withContext(Dispatchers.IO) {
-@@ -1255,7 +1188,7 @@ class MainActivity :
+@@ -1248,7 +1181,7 @@ class MainActivity :
                                              BadgedBox(badge = { Badge(containerColor = MaterialTheme.colorScheme.primary) }) {
                                                  Icon(screen.icon, contentDescription = null)
                                              }
@@ -1350,7 +1350,7 @@ index 3999e3f..cccb542 100644
                                              BadgedBox(badge = { Badge(containerColor = MaterialTheme.colorScheme.error) { Text("!") } }) {
                                                  Icon(screen.icon, contentDescription = null)
                                              }
-@@ -1312,7 +1245,7 @@ class MainActivity :
+@@ -1305,7 +1238,7 @@ class MainActivity :
                                                  BadgedBox(badge = { Badge(containerColor = MaterialTheme.colorScheme.primary) }) {
                                                      Icon(screen.icon, contentDescription = null)
                                                  }
@@ -1888,10 +1888,10 @@ index 12ec111..90d7678 100644
                          CardGroup.Profiles -> stringResource(R.string.title_configuration)
                      },
 diff --git a/app/src/main/java/io/nekohasekai/sfa/compose/screen/dashboard/DashboardViewModel.kt b/app/src/main/java/io/nekohasekai/sfa/compose/screen/dashboard/DashboardViewModel.kt
-index 5268278..003043b 100644
+index 11d0c31..3b492a3 100644
 --- a/app/src/main/java/io/nekohasekai/sfa/compose/screen/dashboard/DashboardViewModel.kt
 +++ b/app/src/main/java/io/nekohasekai/sfa/compose/screen/dashboard/DashboardViewModel.kt
-@@ -17,6 +17,9 @@ import io.nekohasekai.sfa.utils.CommandClient
+@@ -19,6 +19,9 @@ import io.nekohasekai.sfa.utils.CommandClient
  import io.nekohasekai.sfa.utils.CommandTarget
  import io.nekohasekai.sfa.utils.HTTPClient
  import io.nekohasekai.sfa.utils.RemoteControlManager
@@ -1901,7 +1901,7 @@ index 5268278..003043b 100644
  import kotlinx.coroutines.Dispatchers
  import kotlinx.coroutines.delay
  import kotlinx.coroutines.flow.MutableStateFlow
-@@ -28,9 +31,6 @@ import kotlinx.coroutines.launch
+@@ -30,9 +33,6 @@ import kotlinx.coroutines.launch
  import kotlinx.coroutines.withContext
  import org.json.JSONArray
  import org.json.JSONException
@@ -1911,7 +1911,7 @@ index 5268278..003043b 100644
  
  enum class CardGroup(val pairGroup: CardPairGroup? = null) {
      ClashMode,
-@@ -47,6 +47,18 @@ enum class CardPairGroup {
+@@ -49,6 +49,18 @@ enum class CardPairGroup {
      Statistics,
  }
  
@@ -1930,7 +1930,7 @@ index 5268278..003043b 100644
  data class DashboardUiState(
      val serviceStatus: Status = Status.Stopped,
      val profiles: List<Profile> = emptyList(),
-@@ -86,26 +98,8 @@ data class DashboardUiState(
+@@ -88,26 +100,8 @@ data class DashboardUiState(
      val systemProxyEnabled: Boolean = false,
      val systemProxySwitching: Boolean = false,
      // Card visibility settings
@@ -1959,7 +1959,7 @@ index 5268278..003043b 100644
      val showCardSettingsDialog: Boolean = false,
  ) {
      data class DeprecatedNote(val message: String, val migrationLink: String?)
-@@ -123,9 +117,9 @@ class DashboardViewModel :
+@@ -125,9 +119,9 @@ class DashboardViewModel :
      internal val commandClient =
          CommandClient(
              viewModelScope,
@@ -1971,7 +1971,7 @@ index 5268278..003043b 100644
                  CommandClient.ConnectionType.Groups,
              ),
              this,
-@@ -136,8 +130,7 @@ class DashboardViewModel :
+@@ -138,8 +132,7 @@ class DashboardViewModel :
          val disabledItems = loadDisabledItems()
  
          // Calculate visible items (all items minus disabled)
@@ -1981,7 +1981,7 @@ index 5268278..003043b 100644
  
          return DashboardUiState(
              cardOrder = savedOrder,
-@@ -705,27 +698,17 @@ class DashboardViewModel :
+@@ -707,27 +700,17 @@ class DashboardViewModel :
  
          updateState {
              copy(
@@ -2012,7 +2012,7 @@ index 5268278..003043b 100644
          }
  
          return try {
-@@ -734,18 +717,17 @@ class DashboardViewModel :
+@@ -736,18 +719,17 @@ class DashboardViewModel :
  
              for (i in 0 until jsonArray.length()) {
                  val itemName = jsonArray.getString(i)
@@ -2034,7 +2034,7 @@ index 5268278..003043b 100644
          }
      }
  
-@@ -761,15 +743,14 @@ class DashboardViewModel :
+@@ -763,15 +745,14 @@ class DashboardViewModel :
          val savedDisabled = Settings.dashboardDisabledItems
          // Filter out Profiles from disabled items (it cannot be disabled)
          return savedDisabled.mapNotNull { stringToCardGroup(it) }
@@ -2053,7 +2053,7 @@ index 5268278..003043b 100644
      }
  
 diff --git a/app/src/main/java/io/nekohasekai/sfa/compose/screen/settings/AppSettingsScreen.kt b/app/src/main/java/io/nekohasekai/sfa/compose/screen/settings/AppSettingsScreen.kt
-index d5a6491..8ad656f 100644
+index 68154f7..ae29ad3 100644
 --- a/app/src/main/java/io/nekohasekai/sfa/compose/screen/settings/AppSettingsScreen.kt
 +++ b/app/src/main/java/io/nekohasekai/sfa/compose/screen/settings/AppSettingsScreen.kt
 @@ -24,7 +24,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
