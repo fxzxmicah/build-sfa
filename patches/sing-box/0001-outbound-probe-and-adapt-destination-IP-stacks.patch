@@ -1,0 +1,3048 @@
+From 27f494c1859cbf4745e53dd8115afa0a7f9fdcd5 Mon Sep 17 00:00:00 2001
+From: Fxzx micah <48860358+fxzxmicah@users.noreply.github.com>
+Date: Fri, 27 Nov 2026 00:00:02 +0800
+Subject: [PATCH] outbound: probe and adapt destination IP stacks
+
+---
+ adapter/dns.go                            |   1 +
+ adapter/ip_stack.go                       |  58 ++
+ adapter/ip_stack_test.go                  |  46 ++
+ common/urltest/history.go                 | 103 +++
+ common/urltest/http.go                    |  69 ++
+ common/urltest/http3.go                   |  46 ++
+ common/urltest/http3_stub.go              |  16 +
+ common/urltest/ip_stack_test.go           | 161 +++++
+ common/urltest/urltest.go                 | 328 ++++++----
+ daemon/started_service.go                 |  28 +-
+ daemon/started_service.pb.go              | 738 ++++++++++++++--------
+ daemon/started_service.proto              |  17 +
+ dns/ip_stack_test.go                      | 245 +++++++
+ dns/router.go                             | 151 +++--
+ docs/configuration/outbound/urltest.md    |  39 +-
+ docs/configuration/outbound/urltest.zh.md |  28 +-
+ experimental/clashapi/proxies.go          |  11 +-
+ experimental/clashapi/server.go           |   7 +-
+ experimental/libbox/command_types.go      |  39 +-
+ protocol/group/urltest.go                 |  46 +-
+ route/ip_stack.go                         |  46 ++
+ route/ip_stack_test.go                    |  91 +++
+ route/route.go                            |   5 +
+ route/router.go                           |   3 +
+ 24 files changed, 1833 insertions(+), 489 deletions(-)
+ create mode 100644 adapter/ip_stack.go
+ create mode 100644 adapter/ip_stack_test.go
+ create mode 100644 common/urltest/history.go
+ create mode 100644 common/urltest/http.go
+ create mode 100644 common/urltest/http3.go
+ create mode 100644 common/urltest/http3_stub.go
+ create mode 100644 common/urltest/ip_stack_test.go
+ create mode 100644 dns/ip_stack_test.go
+ create mode 100644 route/ip_stack.go
+ create mode 100644 route/ip_stack_test.go
+
+diff --git a/adapter/dns.go b/adapter/dns.go
+index 8119097..ab4016b 100644
+--- a/adapter/dns.go
++++ b/adapter/dns.go
+@@ -20,6 +20,7 @@ type DNSRouter interface {
+ 	Lookup(ctx context.Context, domain string, options DNSQueryOptions) ([]netip.Addr, error)
+ 	ClearCache()
+ 	LookupReverseMapping(ip netip.Addr) (string, bool)
++	LookupRelatedAddresses(ctx context.Context, ip netip.Addr) ([]netip.Addr, error)
+ 	ResetNetwork()
+ }
+ 
+diff --git a/adapter/ip_stack.go b/adapter/ip_stack.go
+new file mode 100644
+index 0000000..0197c0b
+--- /dev/null
++++ b/adapter/ip_stack.go
+@@ -0,0 +1,58 @@
++package adapter
++
++import (
++	"net/netip"
++
++	N "github.com/sagernet/sing/common/network"
++)
++
++type IPStackStatus uint8
++
++const (
++	IPStackUnknown IPStackStatus = iota
++	IPStackAvailable
++	IPStackUnavailable
++)
++
++func (s IPStackStatus) String() string {
++	switch s {
++	case IPStackAvailable:
++		return "available"
++	case IPStackUnavailable:
++		return "unavailable"
++	default:
++		return "unknown"
++	}
++}
++
++func (s IPStackStatus) MarshalText() ([]byte, error) {
++	return []byte(s.String()), nil
++}
++
++type IPStackCapabilities struct {
++	IPv4 IPStackStatus `json:"ipv4"`
++	IPv6 IPStackStatus `json:"ipv6"`
++}
++
++func (c IPStackCapabilities) NeedsAdaptation(address netip.Addr) bool {
++	if address.Is4() {
++		return c.IPv4 == IPStackUnavailable && c.IPv6 == IPStackAvailable
++	}
++	return address.Is6() && c.IPv6 == IPStackUnavailable && c.IPv4 == IPStackAvailable
++}
++
++type OutboundIPStack struct {
++	TCP IPStackCapabilities `json:"tcp"`
++	UDP IPStackCapabilities `json:"udp"`
++}
++
++func (s OutboundIPStack) Network(network string) IPStackCapabilities {
++	switch network {
++	case N.NetworkTCP:
++		return s.TCP
++	case N.NetworkUDP:
++		return s.UDP
++	default:
++		return IPStackCapabilities{}
++	}
++}
+diff --git a/adapter/ip_stack_test.go b/adapter/ip_stack_test.go
+new file mode 100644
+index 0000000..c6f012b
+--- /dev/null
++++ b/adapter/ip_stack_test.go
+@@ -0,0 +1,46 @@
++package adapter
++
++import (
++	"encoding/json"
++	"net/netip"
++	"testing"
++)
++
++func TestIPStackAdaptation(t *testing.T) {
++	for _, test := range []struct {
++		name    string
++		ipv4    IPStackStatus
++		ipv6    IPStackStatus
++		address string
++		adapt   bool
++	}{
++		{"unknown", IPStackUnknown, IPStackUnknown, "192.0.2.1", false},
++		{"unknown source", IPStackUnknown, IPStackAvailable, "192.0.2.1", false},
++		{"unknown alternative", IPStackUnavailable, IPStackUnknown, "192.0.2.1", false},
++		{"dual stack", IPStackAvailable, IPStackAvailable, "192.0.2.1", false},
++		{"both unavailable", IPStackUnavailable, IPStackUnavailable, "192.0.2.1", false},
++		{"IPv4 to IPv6", IPStackUnavailable, IPStackAvailable, "192.0.2.1", true},
++		{"IPv6 to IPv4", IPStackAvailable, IPStackUnavailable, "2001:db8::1", true},
++		{"IPv6 unchanged", IPStackUnavailable, IPStackAvailable, "2001:db8::1", false},
++	} {
++		t.Run(test.name, func(t *testing.T) {
++			capabilities := IPStackCapabilities{IPv4: test.ipv4, IPv6: test.ipv6}
++			if got := capabilities.NeedsAdaptation(netip.MustParseAddr(test.address)); got != test.adapt {
++				t.Fatalf("NeedsAdaptation() = %v, want %v", got, test.adapt)
++			}
++		})
++	}
++}
++
++func TestIPStackRepresentation(t *testing.T) {
++	capabilities := OutboundIPStack{
++		TCP: IPStackCapabilities{IPv4: IPStackAvailable, IPv6: IPStackUnavailable},
++	}
++	data, err := json.Marshal(capabilities)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if string(data) != `{"tcp":{"ipv4":"available","ipv6":"unavailable"},"udp":{"ipv4":"unknown","ipv6":"unknown"}}` {
++		t.Fatalf("unexpected capabilities: %s", data)
++	}
++}
+diff --git a/common/urltest/history.go b/common/urltest/history.go
+new file mode 100644
+index 0000000..0a2ddd2
+--- /dev/null
++++ b/common/urltest/history.go
+@@ -0,0 +1,103 @@
++package urltest
++
++import (
++	"sync"
++
++	"github.com/sagernet/sing-box/adapter"
++	N "github.com/sagernet/sing/common/network"
++	"github.com/sagernet/sing/common/observable"
++)
++
++type HistoryStorage struct {
++	access       sync.RWMutex
++	delayHistory map[string]*adapter.URLTestHistory
++	ipStacks     map[string]adapter.OutboundIPStack
++	updateHooks  []*observable.Subscriber[struct{}]
++}
++
++func NewHistoryStorage() *HistoryStorage {
++	return &HistoryStorage{
++		delayHistory: make(map[string]*adapter.URLTestHistory),
++		ipStacks:     make(map[string]adapter.OutboundIPStack),
++	}
++}
++
++func (s *HistoryStorage) AddUpdateHook(hook *observable.Subscriber[struct{}]) {
++	s.access.Lock()
++	defer s.access.Unlock()
++	s.updateHooks = append(s.updateHooks, hook)
++}
++
++func (s *HistoryStorage) NotifyUpdated() {
++	s.access.RLock()
++	defer s.access.RUnlock()
++	s.notifyUpdated()
++}
++
++func (s *HistoryStorage) LoadURLTestHistory(tag string) *adapter.URLTestHistory {
++	if s == nil {
++		return nil
++	}
++	s.access.RLock()
++	defer s.access.RUnlock()
++	return s.delayHistory[tag]
++}
++
++func (s *HistoryStorage) DeleteURLTestHistory(tag string) {
++	s.access.Lock()
++	delete(s.delayHistory, tag)
++	s.notifyUpdated()
++	s.access.Unlock()
++}
++
++func (s *HistoryStorage) StoreURLTestHistory(tag string, history *adapter.URLTestHistory) {
++	s.access.Lock()
++	s.delayHistory[tag] = history
++	s.notifyUpdated()
++	s.access.Unlock()
++}
++
++func (s *HistoryStorage) notifyUpdated() {
++	for _, updateHook := range s.updateHooks {
++		updateHook.Emit(struct{}{})
++	}
++}
++
++func (s *HistoryStorage) Close() error {
++	s.access.Lock()
++	defer s.access.Unlock()
++	s.updateHooks = nil
++	return nil
++}
++
++func (s *HistoryStorage) LoadIPStack(tag string) (adapter.OutboundIPStack, bool) {
++	if s == nil {
++		return adapter.OutboundIPStack{}, false
++	}
++	s.access.RLock()
++	defer s.access.RUnlock()
++	capabilities, loaded := s.ipStacks[tag]
++	return capabilities, loaded
++}
++
++func (s *HistoryStorage) StoreIPStack(tag string, network string, capabilities adapter.IPStackCapabilities) {
++	s.access.Lock()
++	value := s.ipStacks[tag]
++	switch network {
++	case N.NetworkTCP:
++		value.TCP = capabilities
++	case N.NetworkUDP:
++		value.UDP = capabilities
++	}
++	s.ipStacks[tag] = value
++	s.notifyUpdated()
++	s.access.Unlock()
++}
++
++func (s *HistoryStorage) LoadOutboundIPStack(outbound adapter.Outbound) (adapter.OutboundIPStack, bool) {
++	_, tcpTag, _ := testOutbound(outbound, N.NetworkTCP)
++	_, udpTag, _ := testOutbound(outbound, N.NetworkUDP)
++	tcp, tcpLoaded := s.LoadIPStack(tcpTag)
++	udp, udpLoaded := s.LoadIPStack(udpTag)
++	return adapter.OutboundIPStack{TCP: tcp.TCP, UDP: udp.UDP}, tcpLoaded || udpLoaded
++}
+diff --git a/common/urltest/http.go b/common/urltest/http.go
+new file mode 100644
+index 0000000..0ccbb78
+--- /dev/null
++++ b/common/urltest/http.go
+@@ -0,0 +1,69 @@
++package urltest
++
++import (
++	"context"
++	"crypto/tls"
++	"net"
++	"net/http"
++	"time"
++
++	"github.com/sagernet/sing-box/adapter"
++	C "github.com/sagernet/sing-box/constant"
++	"github.com/sagernet/sing-mux"
++	"github.com/sagernet/sing-snell"
++	"github.com/sagernet/sing/common"
++	M "github.com/sagernet/sing/common/metadata"
++	N "github.com/sagernet/sing/common/network"
++	"github.com/sagernet/sing/common/ntp"
++)
++
++func tcpURLTest(ctx context.Context, request *http.Request, destination M.Socksaddr, detour N.Dialer) (uint16, http.Header, error) {
++	multiplexOutbound, isMultiplexOutbound := common.Cast[adapter.OutboundWithMultiplex](detour)
++	if isMultiplexOutbound && multiplexOutbound.MultiplexEnabled() {
++		warmContext := adapter.ContextWithKeepSession(ctx)
++		warmContext = mux.ContextWithKeepSession(warmContext)
++		warmContext = contextWithQUICKeepSession(warmContext)
++		warmContext = snell.ContextWithKeepSession(warmContext)
++		_, _, err := httpURLTest(warmContext, request, destination, detour)
++		if err != nil {
++			return 0, nil, err
++		}
++	}
++	return httpURLTest(ctx, request, destination, detour)
++}
++
++func httpURLTest(ctx context.Context, request *http.Request, destination M.Socksaddr, detour N.Dialer) (t uint16, header http.Header, err error) {
++	start := time.Now()
++	instance, err := detour.DialContext(ctx, N.NetworkTCP, destination)
++	if err != nil {
++		return
++	}
++	defer instance.Close()
++	if N.NeedHandshakeForWrite(instance) {
++		start = time.Now()
++	}
++	client := http.Client{
++		Transport: &http.Transport{
++			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
++				return instance, nil
++			},
++			TLSClientConfig: &tls.Config{
++				Time:    ntp.TimeFuncFromContext(ctx),
++				RootCAs: adapter.RootPoolFromContext(ctx),
++			},
++		},
++		CheckRedirect: func(req *http.Request, via []*http.Request) error {
++			return http.ErrUseLastResponse
++		},
++		Timeout: C.TCPTimeout,
++	}
++	defer client.CloseIdleConnections()
++	resp, err := client.Do(request.Clone(ctx))
++	if err != nil {
++		return
++	}
++	resp.Body.Close()
++	header = resp.Header
++	t = uint16(max(1, time.Since(start).Milliseconds()))
++	return
++}
+diff --git a/common/urltest/http3.go b/common/urltest/http3.go
+new file mode 100644
+index 0000000..661a70c
+--- /dev/null
++++ b/common/urltest/http3.go
+@@ -0,0 +1,46 @@
++//go:build with_quic
++
++package urltest
++
++import (
++	"context"
++	"crypto/tls"
++	"net/http"
++	"time"
++
++	"github.com/sagernet/quic-go/http3"
++	"github.com/sagernet/sing-box/adapter"
++	"github.com/sagernet/sing-box/common/networkquality"
++	C "github.com/sagernet/sing-box/constant"
++	M "github.com/sagernet/sing/common/metadata"
++	N "github.com/sagernet/sing/common/network"
++	"github.com/sagernet/sing/common/ntp"
++)
++
++func udpURLTest(ctx context.Context, request *http.Request, destination M.Socksaddr, detour N.Dialer) (uint16, error) {
++	factory, err := networkquality.NewHTTP3MeasurementClientFactory(detour)
++	if err != nil {
++		return 0, err
++	}
++	client, err := factory(destination.String(), true, true, nil, nil)
++	if err != nil {
++		return 0, err
++	}
++	transport := client.Transport.(*http3.Transport)
++	transport.TLSClientConfig = &tls.Config{
++		Time:    ntp.TimeFuncFromContext(ctx),
++		RootCAs: adapter.RootPoolFromContext(ctx),
++	}
++	defer transport.Close()
++	client.Timeout = C.TCPTimeout
++	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
++		return http.ErrUseLastResponse
++	}
++	start := time.Now()
++	response, err := client.Do(request.Clone(ctx))
++	if err != nil {
++		return 0, err
++	}
++	response.Body.Close()
++	return uint16(max(1, time.Since(start).Milliseconds())), nil
++}
+diff --git a/common/urltest/http3_stub.go b/common/urltest/http3_stub.go
+new file mode 100644
+index 0000000..98fb5be
+--- /dev/null
++++ b/common/urltest/http3_stub.go
+@@ -0,0 +1,16 @@
++//go:build !with_quic
++
++package urltest
++
++import (
++	"context"
++	"net/http"
++
++	C "github.com/sagernet/sing-box/constant"
++	M "github.com/sagernet/sing/common/metadata"
++	N "github.com/sagernet/sing/common/network"
++)
++
++func udpURLTest(ctx context.Context, request *http.Request, destination M.Socksaddr, detour N.Dialer) (uint16, error) {
++	return 0, C.ErrQUICNotIncluded
++}
+diff --git a/common/urltest/ip_stack_test.go b/common/urltest/ip_stack_test.go
+new file mode 100644
+index 0000000..b5934be
+--- /dev/null
++++ b/common/urltest/ip_stack_test.go
+@@ -0,0 +1,161 @@
++package urltest
++
++import (
++	"context"
++	"errors"
++	"net"
++	"net/http"
++	"net/http/httptest"
++	"net/netip"
++	"strings"
++	"testing"
++
++	"github.com/sagernet/sing-box/adapter"
++	"github.com/sagernet/sing-box/adapter/outbound"
++	C "github.com/sagernet/sing-box/constant"
++	M "github.com/sagernet/sing/common/metadata"
++	N "github.com/sagernet/sing/common/network"
++	"github.com/sagernet/sing/service"
++)
++
++func TestHTTP3Port(t *testing.T) {
++	for _, test := range []struct {
++		value      string
++		port       uint16
++		advertised bool
++	}{
++		{"", 0, false},
++		{"clear", 0, false},
++		{`h2=":443"`, 0, false},
++		{`h3=":443"; ma=86400`, 443, true},
++		{`h2=":443", h3=":8443"; ma=86400`, 8443, true},
++		{`h3="example.com:443"`, 443, true},
++		{`h3="different.example:443"`, 0, false},
++		{`h3=":65536"`, 0, false},
++		{`h3=":0"`, 0, false},
++	} {
++		t.Run(test.value, func(t *testing.T) {
++			header := make(http.Header)
++			header.Add("Alt-Svc", test.value)
++			port, advertised := http3Port(header, "example.com")
++			if port != test.port || advertised != test.advertised {
++				t.Fatalf("http3Port() = (%d, %v), want (%d, %v)", port, advertised, test.port, test.advertised)
++			}
++		})
++	}
++}
++
++func TestStackTestStatus(t *testing.T) {
++	for _, test := range []struct {
++		name   string
++		result stackTestResult
++		status adapter.IPStackStatus
++	}{
++		{"not tested", stackTestResult{}, adapter.IPStackUnknown},
++		{"success", stackTestResult{delay: 1}, adapter.IPStackAvailable},
++		{"failed HTTP", stackTestResult{err: errors.New("HTTP request failed")}, adapter.IPStackUnavailable},
++		{"failed HTTP3", stackTestResult{err: errors.New("HTTP3 request failed")}, adapter.IPStackUnavailable},
++	} {
++		t.Run(test.name, func(t *testing.T) {
++			if status := test.result.status(); status != test.status {
++				t.Fatalf("status() = %s, want %s", status, test.status)
++			}
++		})
++	}
++}
++
++func TestIPStackHistory(t *testing.T) {
++	history := NewHistoryStorage()
++	history.StoreIPStack("node", N.NetworkTCP, adapter.IPStackCapabilities{
++		IPv4: adapter.IPStackAvailable,
++		IPv6: adapter.IPStackUnavailable,
++	})
++	history.StoreIPStack("node", N.NetworkUDP, adapter.IPStackCapabilities{
++		IPv4: adapter.IPStackUnavailable,
++		IPv6: adapter.IPStackAvailable,
++	})
++	history.DeleteURLTestHistory("node")
++	capabilities, loaded := history.LoadIPStack("node")
++	if !loaded || capabilities.TCP.IPv4 != adapter.IPStackAvailable || capabilities.UDP.IPv6 != adapter.IPStackAvailable {
++		t.Fatalf("capabilities lost when delay history changed: %+v", capabilities)
++	}
++	history.StoreIPStack("node", N.NetworkTCP, adapter.IPStackCapabilities{})
++	capabilities, _ = history.LoadIPStack("node")
++	if capabilities.TCP != (adapter.IPStackCapabilities{}) || capabilities.UDP.IPv6 != adapter.IPStackAvailable {
++		t.Fatalf("unexpected network update: %+v", capabilities)
++	}
++}
++
++type stackProbeDNS struct {
++	adapter.DNSRouter
++	dualStack bool
++	lookups   int
++}
++
++func (d *stackProbeDNS) Lookup(ctx context.Context, domain string, options adapter.DNSQueryOptions) ([]netip.Addr, error) {
++	d.lookups++
++	addresses := []netip.Addr{netip.MustParseAddr("192.0.2.1")}
++	if d.dualStack {
++		addresses = append(addresses, netip.MustParseAddr("2001:db8::1"))
++	}
++	return addresses, nil
++}
++
++type stackProbeDialer struct {
++	outbound.Adapter
++	target string
++}
++
++func (d *stackProbeDialer) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
++	if destination.IsIPv6() {
++		return nil, errors.New("IPv6 unavailable")
++	}
++	var dialer net.Dialer
++	return dialer.DialContext(ctx, network, d.target)
++}
++
++func (d *stackProbeDialer) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
++	return nil, errors.New("unexpected packet listener")
++}
++
++func TestURLTestIPStacks(t *testing.T) {
++	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
++		writer.WriteHeader(http.StatusNoContent)
++	}))
++	defer server.Close()
++	_, port, err := net.SplitHostPort(strings.TrimPrefix(server.URL, "http://"))
++	if err != nil {
++		t.Fatal(err)
++	}
++	detour := &stackProbeDialer{
++		Adapter: outbound.NewAdapter(C.TypeVLESS, "node", []string{N.NetworkTCP, N.NetworkUDP}, nil),
++		target:  server.Listener.Addr().String(),
++	}
++	for _, dualStack := range []bool{false, true} {
++		history := NewHistoryStorage()
++		dns := &stackProbeDNS{dualStack: dualStack}
++		ctx := service.ContextWith[adapter.DNSRouter](context.Background(), dns)
++		ctx = service.ContextWithPtr(ctx, history)
++		delay, err := URLTest(ctx, "http://probe.example:"+port+"/generate_204", detour)
++		if err != nil || delay == 0 {
++			t.Fatalf("delay test failed: %d, %v", delay, err)
++		}
++		if dns.lookups != 1 {
++			t.Fatalf("DNS lookups = %d, want 1", dns.lookups)
++		}
++		capabilities, loaded := history.LoadIPStack("node")
++		if !loaded {
++			t.Fatal("missing capability result")
++		}
++		if dualStack {
++			if capabilities.TCP.IPv4 != adapter.IPStackAvailable || capabilities.TCP.IPv6 != adapter.IPStackUnavailable {
++				t.Fatalf("unexpected TCP capabilities: %+v", capabilities.TCP)
++			}
++		} else if capabilities != (adapter.OutboundIPStack{}) {
++			t.Fatalf("single-stack URL enabled capability detection: %+v", capabilities)
++		}
++		if capabilities.UDP != (adapter.IPStackCapabilities{}) {
++			t.Fatal("plain HTTP was treated as a UDP probe")
++		}
++	}
++}
+diff --git a/common/urltest/urltest.go b/common/urltest/urltest.go
+index 26efe39..79bba82 100644
+--- a/common/urltest/urltest.go
++++ b/common/urltest/urltest.go
+@@ -2,152 +2,246 @@ package urltest
+ 
+ import (
+ 	"context"
+-	"crypto/tls"
++	"errors"
+ 	"net"
+ 	"net/http"
+-	"net/url"
++	"net/netip"
++	"slices"
++	"strconv"
++	"strings"
+ 	"sync"
+-	"time"
+ 
+ 	"github.com/sagernet/sing-box/adapter"
+ 	C "github.com/sagernet/sing-box/constant"
+-	"github.com/sagernet/sing-mux"
+-	"github.com/sagernet/sing-snell"
+-	"github.com/sagernet/sing/common"
++	E "github.com/sagernet/sing/common/exceptions"
+ 	M "github.com/sagernet/sing/common/metadata"
+ 	N "github.com/sagernet/sing/common/network"
+-	"github.com/sagernet/sing/common/ntp"
+-	"github.com/sagernet/sing/common/observable"
++	"github.com/sagernet/sing/service"
+ )
+ 
+-type HistoryStorage struct {
+-	access       sync.RWMutex
+-	delayHistory map[string]*adapter.URLTestHistory
+-	updateHooks  []*observable.Subscriber[struct{}]
++type stackTestResult struct {
++	delay uint16
++	err   error
+ }
+ 
+-func NewHistoryStorage() *HistoryStorage {
+-	return &HistoryStorage{
+-		delayHistory: make(map[string]*adapter.URLTestHistory),
++func (r stackTestResult) status() adapter.IPStackStatus {
++	switch {
++	case r.delay > 0:
++		return adapter.IPStackAvailable
++	case r.err == nil:
++		return adapter.IPStackUnknown
++	default:
++		return adapter.IPStackUnavailable
+ 	}
+ }
+ 
+-func (s *HistoryStorage) AddUpdateHook(hook *observable.Subscriber[struct{}]) {
+-	s.access.Lock()
+-	defer s.access.Unlock()
+-	s.updateHooks = append(s.updateHooks, hook)
+-}
+-
+-func (s *HistoryStorage) NotifyUpdated() {
+-	s.access.RLock()
+-	defer s.access.RUnlock()
+-	s.notifyUpdated()
+-}
+-
+-func (s *HistoryStorage) LoadURLTestHistory(tag string) *adapter.URLTestHistory {
+-	if s == nil {
+-		return nil
+-	}
+-	s.access.RLock()
+-	defer s.access.RUnlock()
+-	return s.delayHistory[tag]
+-}
+-
+-func (s *HistoryStorage) DeleteURLTestHistory(tag string) {
+-	s.access.Lock()
+-	delete(s.delayHistory, tag)
+-	s.notifyUpdated()
+-	s.access.Unlock()
+-}
+-
+-func (s *HistoryStorage) StoreURLTestHistory(tag string, history *adapter.URLTestHistory) {
+-	s.access.Lock()
+-	s.delayHistory[tag] = history
+-	s.notifyUpdated()
+-	s.access.Unlock()
+-}
+-
+-func (s *HistoryStorage) notifyUpdated() {
+-	for _, updateHook := range s.updateHooks {
+-		updateHook.Emit(struct{}{})
+-	}
+-}
+-
+-func (s *HistoryStorage) Close() error {
+-	s.access.Lock()
+-	defer s.access.Unlock()
+-	s.updateHooks = nil
+-	return nil
+-}
+-
+ func URLTest(ctx context.Context, link string, detour N.Dialer) (uint16, error) {
+-	multiplexOutbound, isMultiplexOutbound := common.Cast[adapter.OutboundWithMultiplex](detour)
+-	if isMultiplexOutbound && multiplexOutbound.MultiplexEnabled() {
+-		warmContext := adapter.ContextWithKeepSession(ctx)
+-		warmContext = mux.ContextWithKeepSession(warmContext)
+-		warmContext = contextWithQUICKeepSession(warmContext)
+-		warmContext = snell.ContextWithKeepSession(warmContext)
+-		_, err := urlTest(warmContext, link, detour)
+-		if err != nil {
+-			return 0, err
+-		}
+-	}
+-	return urlTest(ctx, link, detour)
+-}
+-
+-func urlTest(ctx context.Context, link string, detour N.Dialer) (t uint16, err error) {
++	ctx, cancel := context.WithTimeout(ctx, C.TCPTimeout)
++	defer cancel()
+ 	if link == "" {
+-		link = "https://www.gstatic.com/generate_204"
++		link = "https://cp.cloudflare.com/generate_204"
+ 	}
+-	linkURL, err := url.Parse(link)
++	request, err := http.NewRequest(http.MethodHead, link, nil)
+ 	if err != nil {
+-		return
++		return 0, err
+ 	}
+-	hostname := linkURL.Hostname()
+-	port := linkURL.Port()
++	port := request.URL.Port()
+ 	if port == "" {
+-		switch linkURL.Scheme {
++		switch request.URL.Scheme {
+ 		case "http":
+ 			port = "80"
+ 		case "https":
+ 			port = "443"
+ 		}
+ 	}
++	destination := M.ParseSocksaddrHostPortStr(request.URL.Hostname(), port)
++	var addresses [2][]netip.Addr
++	dns := service.FromContext[adapter.DNSRouter](ctx)
++	if dns != nil && destination.IsDomain() {
++		resolved, _ := dns.Lookup(ctx, destination.Fqdn, adapter.DNSQueryOptions{Strategy: C.DomainStrategyPreferIPv4})
++		for _, address := range resolved {
++			if address.Is4() {
++				addresses[0] = append(addresses[0], address)
++			} else {
++				addresses[1] = append(addresses[1], address)
++			}
++		}
++	}
++	tcpOutbound, tcpTag, tcpSupported := testOutbound(detour, N.NetworkTCP)
++	udpOutbound, udpTag, udpSupported := testOutbound(tcpOutbound, N.NetworkUDP)
++	history := service.PtrFromContext[HistoryStorage](ctx)
++	if len(addresses[0]) == 0 || len(addresses[1]) == 0 {
++		if history != nil && !errors.Is(ctx.Err(), context.Canceled) {
++			if tcpTag != "" {
++				history.StoreIPStack(tcpTag, N.NetworkTCP, adapter.IPStackCapabilities{})
++			}
++			if udpTag != "" {
++				history.StoreIPStack(udpTag, N.NetworkUDP, adapter.IPStackCapabilities{})
++			}
++		}
++		if !tcpSupported {
++			return 0, E.New("TCP is not supported by outbound")
++		}
++		delay, _, testErr := tcpURLTest(ctx, request, destination, tcpOutbound)
++		return delay, testErr
++	}
++	var tcpResults, udpResults [2]stackTestResult
++	ports := [2]chan uint16{make(chan uint16, 2), make(chan uint16, 2)}
++	var tcpGroup, udpGroup sync.WaitGroup
++	for index, candidates := range addresses {
++		tcpGroup.Go(func() {
++			var header http.Header
++			if tcpSupported {
++				tcpResults[index].delay, header, tcpResults[index].err = tcpURLTest(ctx, request, M.SocksaddrFrom(candidates[0], destination.Port), tcpOutbound)
++			} else {
++				tcpResults[index].err = E.New("TCP is not supported by outbound")
++			}
++			if port, advertised := http3Port(header, destination.Fqdn); advertised {
++				for _, updates := range ports {
++					updates <- port
++				}
++			}
++		})
++		if C.WithQUIC {
++			udpGroup.Go(func() {
++				if udpSupported && request.URL.Scheme == "https" {
++					udpResults[index] = probeHTTP3(ctx, request, M.SocksaddrFrom(candidates[0], destination.Port), udpOutbound, ports[index])
++				}
++				if !udpSupported {
++					udpResults[index].err = E.New("UDP is not supported by outbound")
++				}
++			})
++		}
++	}
++	tcpGroup.Wait()
++	for _, updates := range ports {
++		close(updates)
++	}
++	udpGroup.Wait()
++	var capabilities adapter.OutboundIPStack
++	var delay uint16
++	var failures []error
++	for _, test := range []struct {
++		network      string
++		results      [2]stackTestResult
++		capabilities *adapter.IPStackCapabilities
++	}{
++		{N.NetworkTCP, tcpResults, &capabilities.TCP},
++		{N.NetworkUDP, udpResults, &capabilities.UDP},
++	} {
++		*test.capabilities = adapter.IPStackCapabilities{
++			IPv4: test.results[0].status(),
++			IPv6: test.results[1].status(),
++		}
++		for family, result := range test.results {
++			if result.delay > 0 && (delay == 0 || result.delay < delay) {
++				delay = result.delay
++			}
++			if result.err != nil {
++				failures = append(failures, E.Cause(result.err, test.network, "/IPv", []int{4, 6}[family]))
++			}
++		}
++	}
++	if errors.Is(ctx.Err(), context.Canceled) {
++		return 0, ctx.Err()
++	}
++	if history != nil {
++		if tcpTag != "" {
++			history.StoreIPStack(tcpTag, N.NetworkTCP, capabilities.TCP)
++		}
++		if udpTag != "" {
++			history.StoreIPStack(udpTag, N.NetworkUDP, capabilities.UDP)
++		}
++	}
++	if delay > 0 {
++		return delay, nil
++	}
++	return 0, E.Errors(failures...)
++}
+ 
+-	start := time.Now()
+-	instance, err := detour.DialContext(ctx, "tcp", M.ParseSocksaddrHostPortStr(hostname, port))
+-	if err != nil {
+-		return
++// Probe the origin immediately; an advertised same-host alternative can replace its UDP port.
++func probeHTTP3(ctx context.Context, request *http.Request, destination M.Socksaddr, detour N.Dialer, ports <-chan uint16) stackTestResult {
++	probe := func(destination M.Socksaddr) (chan stackTestResult, context.CancelFunc) {
++		probeContext, cancel := context.WithCancel(ctx)
++		results := make(chan stackTestResult, 1)
++		go func() {
++			delay, err := udpURLTest(probeContext, request, destination, detour)
++			results <- stackTestResult{delay: delay, err: err}
++		}()
++		return results, cancel
+ 	}
+-	defer instance.Close()
+-	if N.NeedHandshakeForWrite(instance) {
+-		start = time.Now()
++	results, cancel := probe(destination)
++	defer func() { cancel() }()
++	var failure stackTestResult
++	for {
++		select {
++		case port, loaded := <-ports:
++			if !loaded {
++				ports = nil
++				if failure.err != nil {
++					return failure
++				}
++				continue
++			}
++			if port != destination.Port {
++				cancel()
++				destination.Port = port
++				results, cancel = probe(destination)
++				failure = stackTestResult{}
++			}
++		case result := <-results:
++			if result.err == nil || ports == nil {
++				return result
++			}
++			failure = result
++			results = nil
++		case <-ctx.Done():
++			if failure.err != nil {
++				return failure
++			}
++			return stackTestResult{err: ctx.Err()}
++		}
+ 	}
+-	req, err := http.NewRequest(http.MethodHead, link, nil)
+-	if err != nil {
+-		return
+-	}
+-	client := http.Client{
+-		Transport: &http.Transport{
+-			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+-				return instance, nil
+-			},
+-			TLSClientConfig: &tls.Config{
+-				Time:    ntp.TimeFuncFromContext(ctx),
+-				RootCAs: adapter.RootPoolFromContext(ctx),
+-			},
+-		},
+-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+-			return http.ErrUseLastResponse
+-		},
+-		Timeout: C.TCPTimeout,
+-	}
+-	defer client.CloseIdleConnections()
+-	resp, err := client.Do(req.WithContext(ctx))
+-	if err != nil {
+-		return
++}
++
++func testOutbound(detour N.Dialer, network string) (N.Dialer, string, bool) {
++	outbound, loaded := detour.(adapter.Outbound)
++	if !loaded {
++		return detour, "", true
++	}
++	for {
++		group, isGroup := outbound.(adapter.OutboundGroup)
++		if !isGroup {
++			return outbound, outbound.Tag(), slices.Contains(outbound.Network(), network)
++		}
++		outbound = group.Selected(network)
++		if outbound == nil {
++			return detour, "", false
++		}
++	}
++}
++
++func http3Port(header http.Header, hostname string) (uint16, bool) {
++	for _, value := range header.Values("Alt-Svc") {
++		for _, alternative := range strings.Split(value, ",") {
++			service, _, _ := strings.Cut(alternative, ";")
++			protocol, authority, found := strings.Cut(service, "=")
++			if !found || strings.TrimSpace(protocol) != "h3" {
++				continue
++			}
++			authority, err := strconv.Unquote(strings.TrimSpace(authority))
++			if err != nil {
++				continue
++			}
++			host, port, err := net.SplitHostPort(authority)
++			if err != nil || (host != "" && !strings.EqualFold(host, hostname)) {
++				continue
++			}
++			portNumber, err := strconv.ParseUint(port, 10, 16)
++			if err == nil && portNumber > 0 {
++				return uint16(portNumber), true
++			}
++		}
+ 	}
+-	resp.Body.Close()
+-	t = uint16(time.Since(start) / time.Millisecond)
+-	return
++	return 0, false
+ }
+diff --git a/daemon/started_service.go b/daemon/started_service.go
+index 41c9c92..18fbb9f 100644
+--- a/daemon/started_service.go
++++ b/daemon/started_service.go
+@@ -620,6 +620,7 @@ func (s *StartedService) readGroups() *Groups {
+ 			var item GroupItem
+ 			item.Tag = itemTag
+ 			item.Type = itemOutbound.Type()
++			item.IpStack = outboundIPStack(historyStorage, itemOutbound)
+ 			if history := historyStorage.LoadURLTestHistory(group.RealTag(itemOutbound, N.NetworkTCP)); history != nil {
+ 				item.UrlTestTime = history.Time.Unix()
+ 				item.UrlTestDelay = int32(history.Delay)
+@@ -634,6 +635,23 @@ func (s *StartedService) readGroups() *Groups {
+ 	return &gs
+ }
+ 
++func outboundIPStack(history *urltest.HistoryStorage, outbound adapter.Outbound) *OutboundIPStack {
++	capabilities, loaded := history.LoadOutboundIPStack(outbound)
++	if !loaded {
++		return nil
++	}
++	return &OutboundIPStack{
++		Tcp: &IPStackCapabilities{
++			Ipv4: IPStackStatus(capabilities.TCP.IPv4),
++			Ipv6: IPStackStatus(capabilities.TCP.IPv6),
++		},
++		Udp: &IPStackCapabilities{
++			Ipv4: IPStackStatus(capabilities.UDP.IPv4),
++			Ipv6: IPStackStatus(capabilities.UDP.IPv6),
++		},
++	}
++}
++
+ func (s *StartedService) GetClashModeStatus(ctx context.Context, empty *emptypb.Empty) (*ClashModeStatus, error) {
+ 	s.serviceAccess.RLock()
+ 	if s.serviceStatus.Status != ServiceStatus_STARTED {
+@@ -1177,8 +1195,9 @@ func (s *StartedService) SubscribeOutbounds(_ *emptypb.Empty, server grpc.Server
+ 			historyStorage := boxService.urlTestHistoryStorage
+ 			for _, ob := range boxService.outboundManager.Outbounds() {
+ 				item := &GroupItem{
+-					Tag:  ob.Tag(),
+-					Type: ob.Type(),
++					Tag:     ob.Tag(),
++					Type:    ob.Type(),
++					IpStack: outboundIPStack(historyStorage, ob),
+ 				}
+ 				if history := historyStorage.LoadURLTestHistory(group.RealTag(ob, N.NetworkTCP)); history != nil {
+ 					item.UrlTestTime = history.Time.Unix()
+@@ -1188,8 +1207,9 @@ func (s *StartedService) SubscribeOutbounds(_ *emptypb.Empty, server grpc.Server
+ 			}
+ 			for _, ep := range boxService.endpointManager.Endpoints() {
+ 				item := &GroupItem{
+-					Tag:  ep.Tag(),
+-					Type: ep.Type(),
++					Tag:     ep.Tag(),
++					Type:    ep.Type(),
++					IpStack: outboundIPStack(historyStorage, ep),
+ 				}
+ 				if history := historyStorage.LoadURLTestHistory(group.RealTag(ep, N.NetworkTCP)); history != nil {
+ 					item.UrlTestTime = history.Time.Unix()
+diff --git a/daemon/started_service.pb.go b/daemon/started_service.pb.go
+index 894063c..a05980b 100644
+--- a/daemon/started_service.pb.go
++++ b/daemon/started_service.pb.go
+@@ -7,6 +7,7 @@ import (
+ 
+ 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
+ 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
++
+ 	emptypb "google.golang.org/protobuf/types/known/emptypb"
+ )
+ 
+@@ -231,6 +232,55 @@ func (USBBackend) EnumDescriptor() ([]byte, []int) {
+ 	return file_daemon_started_service_proto_rawDescGZIP(), []int{3}
+ }
+ 
++type IPStackStatus int32
++
++const (
++	IPStackStatus_IP_STACK_UNKNOWN     IPStackStatus = 0
++	IPStackStatus_IP_STACK_AVAILABLE   IPStackStatus = 1
++	IPStackStatus_IP_STACK_UNAVAILABLE IPStackStatus = 2
++)
++
++// Enum value maps for IPStackStatus.
++var (
++	IPStackStatus_name = map[int32]string{
++		0: "IP_STACK_UNKNOWN",
++		1: "IP_STACK_AVAILABLE",
++		2: "IP_STACK_UNAVAILABLE",
++	}
++	IPStackStatus_value = map[string]int32{
++		"IP_STACK_UNKNOWN":     0,
++		"IP_STACK_AVAILABLE":   1,
++		"IP_STACK_UNAVAILABLE": 2,
++	}
++)
++
++func (x IPStackStatus) Enum() *IPStackStatus {
++	p := new(IPStackStatus)
++	*p = x
++	return p
++}
++
++func (x IPStackStatus) String() string {
++	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
++}
++
++func (IPStackStatus) Descriptor() protoreflect.EnumDescriptor {
++	return file_daemon_started_service_proto_enumTypes[4].Descriptor()
++}
++
++func (IPStackStatus) Type() protoreflect.EnumType {
++	return &file_daemon_started_service_proto_enumTypes[4]
++}
++
++func (x IPStackStatus) Number() protoreflect.EnumNumber {
++	return protoreflect.EnumNumber(x)
++}
++
++// Deprecated: Use IPStackStatus.Descriptor instead.
++func (IPStackStatus) EnumDescriptor() ([]byte, []int) {
++	return file_daemon_started_service_proto_rawDescGZIP(), []int{4}
++}
++
+ type ServiceStatus_Type int32
+ 
+ const (
+@@ -270,11 +320,11 @@ func (x ServiceStatus_Type) String() string {
+ }
+ 
+ func (ServiceStatus_Type) Descriptor() protoreflect.EnumDescriptor {
+-	return file_daemon_started_service_proto_enumTypes[4].Descriptor()
++	return file_daemon_started_service_proto_enumTypes[5].Descriptor()
+ }
+ 
+ func (ServiceStatus_Type) Type() protoreflect.EnumType {
+-	return &file_daemon_started_service_proto_enumTypes[4]
++	return &file_daemon_started_service_proto_enumTypes[5]
+ }
+ 
+ func (x ServiceStatus_Type) Number() protoreflect.EnumNumber {
+@@ -772,6 +822,7 @@ type GroupItem struct {
+ 	Type          string                 `protobuf:"bytes,2,opt,name=type,proto3" json:"type,omitempty"`
+ 	UrlTestTime   int64                  `protobuf:"varint,3,opt,name=urlTestTime,proto3" json:"urlTestTime,omitempty"`
+ 	UrlTestDelay  int32                  `protobuf:"varint,4,opt,name=urlTestDelay,proto3" json:"urlTestDelay,omitempty"`
++	IpStack       *OutboundIPStack       `protobuf:"bytes,5,opt,name=ipStack,proto3" json:"ipStack,omitempty"`
+ 	unknownFields protoimpl.UnknownFields
+ 	sizeCache     protoimpl.SizeCache
+ }
+@@ -834,6 +885,13 @@ func (x *GroupItem) GetUrlTestDelay() int32 {
+ 	return 0
+ }
+ 
++func (x *GroupItem) GetIpStack() *OutboundIPStack {
++	if x != nil {
++		return x.IpStack
++	}
++	return nil
++}
++
+ type URLTestRequest struct {
+ 	state         protoimpl.MessageState `protogen:"open.v1"`
+ 	OutboundTag   string                 `protobuf:"bytes,1,opt,name=outboundTag,proto3" json:"outboundTag,omitempty"`
+@@ -7396,6 +7454,110 @@ func (x *NotificationCancel) GetTypeID() int32 {
+ 	return 0
+ }
+ 
++type IPStackCapabilities struct {
++	state         protoimpl.MessageState `protogen:"open.v1"`
++	Ipv4          IPStackStatus          `protobuf:"varint,1,opt,name=ipv4,proto3,enum=daemon.IPStackStatus" json:"ipv4,omitempty"`
++	Ipv6          IPStackStatus          `protobuf:"varint,2,opt,name=ipv6,proto3,enum=daemon.IPStackStatus" json:"ipv6,omitempty"`
++	unknownFields protoimpl.UnknownFields
++	sizeCache     protoimpl.SizeCache
++}
++
++func (x *IPStackCapabilities) Reset() {
++	*x = IPStackCapabilities{}
++	mi := &file_daemon_started_service_proto_msgTypes[102]
++	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
++	ms.StoreMessageInfo(mi)
++}
++
++func (x *IPStackCapabilities) String() string {
++	return protoimpl.X.MessageStringOf(x)
++}
++
++func (*IPStackCapabilities) ProtoMessage() {}
++
++func (x *IPStackCapabilities) ProtoReflect() protoreflect.Message {
++	mi := &file_daemon_started_service_proto_msgTypes[102]
++	if x != nil {
++		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
++		if ms.LoadMessageInfo() == nil {
++			ms.StoreMessageInfo(mi)
++		}
++		return ms
++	}
++	return mi.MessageOf(x)
++}
++
++// Deprecated: Use IPStackCapabilities.ProtoReflect.Descriptor instead.
++func (*IPStackCapabilities) Descriptor() ([]byte, []int) {
++	return file_daemon_started_service_proto_rawDescGZIP(), []int{102}
++}
++
++func (x *IPStackCapabilities) GetIpv4() IPStackStatus {
++	if x != nil {
++		return x.Ipv4
++	}
++	return IPStackStatus_IP_STACK_UNKNOWN
++}
++
++func (x *IPStackCapabilities) GetIpv6() IPStackStatus {
++	if x != nil {
++		return x.Ipv6
++	}
++	return IPStackStatus_IP_STACK_UNKNOWN
++}
++
++type OutboundIPStack struct {
++	state         protoimpl.MessageState `protogen:"open.v1"`
++	Tcp           *IPStackCapabilities   `protobuf:"bytes,1,opt,name=tcp,proto3" json:"tcp,omitempty"`
++	Udp           *IPStackCapabilities   `protobuf:"bytes,2,opt,name=udp,proto3" json:"udp,omitempty"`
++	unknownFields protoimpl.UnknownFields
++	sizeCache     protoimpl.SizeCache
++}
++
++func (x *OutboundIPStack) Reset() {
++	*x = OutboundIPStack{}
++	mi := &file_daemon_started_service_proto_msgTypes[103]
++	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
++	ms.StoreMessageInfo(mi)
++}
++
++func (x *OutboundIPStack) String() string {
++	return protoimpl.X.MessageStringOf(x)
++}
++
++func (*OutboundIPStack) ProtoMessage() {}
++
++func (x *OutboundIPStack) ProtoReflect() protoreflect.Message {
++	mi := &file_daemon_started_service_proto_msgTypes[103]
++	if x != nil {
++		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
++		if ms.LoadMessageInfo() == nil {
++			ms.StoreMessageInfo(mi)
++		}
++		return ms
++	}
++	return mi.MessageOf(x)
++}
++
++// Deprecated: Use OutboundIPStack.ProtoReflect.Descriptor instead.
++func (*OutboundIPStack) Descriptor() ([]byte, []int) {
++	return file_daemon_started_service_proto_rawDescGZIP(), []int{103}
++}
++
++func (x *OutboundIPStack) GetTcp() *IPStackCapabilities {
++	if x != nil {
++		return x.Tcp
++	}
++	return nil
++}
++
++func (x *OutboundIPStack) GetUdp() *IPStackCapabilities {
++	if x != nil {
++		return x.Udp
++	}
++	return nil
++}
++
+ type Log_Message struct {
+ 	state         protoimpl.MessageState `protogen:"open.v1"`
+ 	Level         LogLevel               `protobuf:"varint,1,opt,name=level,proto3,enum=daemon.LogLevel" json:"level,omitempty"`
+@@ -7406,7 +7568,7 @@ type Log_Message struct {
+ 
+ func (x *Log_Message) Reset() {
+ 	*x = Log_Message{}
+-	mi := &file_daemon_started_service_proto_msgTypes[102]
++	mi := &file_daemon_started_service_proto_msgTypes[104]
+ 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+ 	ms.StoreMessageInfo(mi)
+ }
+@@ -7418,7 +7580,7 @@ func (x *Log_Message) String() string {
+ func (*Log_Message) ProtoMessage() {}
+ 
+ func (x *Log_Message) ProtoReflect() protoreflect.Message {
+-	mi := &file_daemon_started_service_proto_msgTypes[102]
++	mi := &file_daemon_started_service_proto_msgTypes[104]
+ 	if x != nil {
+ 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+ 		if ms.LoadMessageInfo() == nil {
+@@ -7499,12 +7661,13 @@ const file_daemon_started_service_proto_rawDesc = "" +
+ 	"selectable\x12\x1a\n" +
+ 	"\bselected\x18\x04 \x01(\tR\bselected\x12\x1a\n" +
+ 	"\bisExpand\x18\x05 \x01(\bR\bisExpand\x12'\n" +
+-	"\x05items\x18\x06 \x03(\v2\x11.daemon.GroupItemR\x05items\"w\n" +
++	"\x05items\x18\x06 \x03(\v2\x11.daemon.GroupItemR\x05items\"\xaa\x01\n" +
+ 	"\tGroupItem\x12\x10\n" +
+ 	"\x03tag\x18\x01 \x01(\tR\x03tag\x12\x12\n" +
+ 	"\x04type\x18\x02 \x01(\tR\x04type\x12 \n" +
+ 	"\vurlTestTime\x18\x03 \x01(\x03R\vurlTestTime\x12\"\n" +
+-	"\furlTestDelay\x18\x04 \x01(\x05R\furlTestDelay\"2\n" +
++	"\furlTestDelay\x18\x04 \x01(\x05R\furlTestDelay\x121\n" +
++	"\aipStack\x18\x05 \x01(\v2\x17.daemon.OutboundIPStackR\aipStack\"2\n" +
+ 	"\x0eURLTestRequest\x12 \n" +
+ 	"\voutboundTag\x18\x01 \x01(\tR\voutboundTag\"U\n" +
+ 	"\x15SelectOutboundRequest\x12\x1a\n" +
+@@ -8016,7 +8179,13 @@ const file_daemon_started_service_proto_rawDesc = "" +
+ 	"\n" +
+ 	"identifier\x18\x01 \x01(\tR\n" +
+ 	"identifier\x12\x16\n" +
+-	"\x06typeID\x18\x02 \x01(\x05R\x06typeID*U\n" +
++	"\x06typeID\x18\x02 \x01(\x05R\x06typeID\"k\n" +
++	"\x13IPStackCapabilities\x12)\n" +
++	"\x04ipv4\x18\x01 \x01(\x0e2\x15.daemon.IPStackStatusR\x04ipv4\x12)\n" +
++	"\x04ipv6\x18\x02 \x01(\x0e2\x15.daemon.IPStackStatusR\x04ipv6\"o\n" +
++	"\x0fOutboundIPStack\x12-\n" +
++	"\x03tcp\x18\x01 \x01(\v2\x1b.daemon.IPStackCapabilitiesR\x03tcp\x12-\n" +
++	"\x03udp\x18\x02 \x01(\v2\x1b.daemon.IPStackCapabilitiesR\x03udp*U\n" +
+ 	"\bLogLevel\x12\t\n" +
+ 	"\x05PANIC\x10\x00\x12\t\n" +
+ 	"\x05FATAL\x10\x01\x12\t\n" +
+@@ -8039,7 +8208,11 @@ const file_daemon_started_service_proto_rawDesc = "" +
+ 	"\x17USB_BACKEND_LINUX_SYSFS\x10\x01\x12\x17\n" +
+ 	"\x13USB_BACKEND_DYNAMIC\x10\x02\x12\x1c\n" +
+ 	"\x18USB_BACKEND_DARWIN_IOKIT\x10\x03\x12\x1f\n" +
+-	"\x1bUSB_BACKEND_WINDOWS_VBOXUSB\x10\x042\xdb\x1a\n" +
++	"\x1bUSB_BACKEND_WINDOWS_VBOXUSB\x10\x04*W\n" +
++	"\rIPStackStatus\x12\x14\n" +
++	"\x10IP_STACK_UNKNOWN\x10\x00\x12\x16\n" +
++	"\x12IP_STACK_AVAILABLE\x10\x01\x12\x18\n" +
++	"\x14IP_STACK_UNAVAILABLE\x10\x022\xdb\x1a\n" +
+ 	"\x0eStartedService\x127\n" +
+ 	"\n" +
+ 	"GetVersion\x12\x16.google.protobuf.Empty\x1a\x0f.daemon.Version\"\x00\x12K\n" +
+@@ -8097,278 +8270,283 @@ func file_daemon_started_service_proto_rawDescGZIP() []byte {
+ 	return file_daemon_started_service_proto_rawDescData
+ }
+ 
+-var (
+-	file_daemon_started_service_proto_enumTypes = make([]protoimpl.EnumInfo, 5)
+-	file_daemon_started_service_proto_msgTypes  = make([]protoimpl.MessageInfo, 104)
+-	file_daemon_started_service_proto_goTypes   = []any{
+-		LogLevel(0),                               // 0: daemon.LogLevel
+-		ConnectionEventType(0),                    // 1: daemon.ConnectionEventType
+-		USBDeviceState(0),                         // 2: daemon.USBDeviceState
+-		USBBackend(0),                             // 3: daemon.USBBackend
+-		ServiceStatus_Type(0),                     // 4: daemon.ServiceStatus.Type
+-		(*Version)(nil),                           // 5: daemon.Version
+-		(*ServiceStatus)(nil),                     // 6: daemon.ServiceStatus
+-		(*SubscribeStatusRequest)(nil),            // 7: daemon.SubscribeStatusRequest
+-		(*Log)(nil),                               // 8: daemon.Log
+-		(*DefaultLogLevel)(nil),                   // 9: daemon.DefaultLogLevel
+-		(*Status)(nil),                            // 10: daemon.Status
+-		(*Groups)(nil),                            // 11: daemon.Groups
+-		(*Group)(nil),                             // 12: daemon.Group
+-		(*GroupItem)(nil),                         // 13: daemon.GroupItem
+-		(*URLTestRequest)(nil),                    // 14: daemon.URLTestRequest
+-		(*SelectOutboundRequest)(nil),             // 15: daemon.SelectOutboundRequest
+-		(*SetGroupExpandRequest)(nil),             // 16: daemon.SetGroupExpandRequest
+-		(*ClashMode)(nil),                         // 17: daemon.ClashMode
+-		(*ClashModeStatus)(nil),                   // 18: daemon.ClashModeStatus
+-		(*SubscribeConnectionsRequest)(nil),       // 19: daemon.SubscribeConnectionsRequest
+-		(*ConnectionEvent)(nil),                   // 20: daemon.ConnectionEvent
+-		(*ConnectionEvents)(nil),                  // 21: daemon.ConnectionEvents
+-		(*Connection)(nil),                        // 22: daemon.Connection
+-		(*ProcessInfo)(nil),                       // 23: daemon.ProcessInfo
+-		(*CloseConnectionRequest)(nil),            // 24: daemon.CloseConnectionRequest
+-		(*DeprecatedWarnings)(nil),                // 25: daemon.DeprecatedWarnings
+-		(*DeprecatedWarning)(nil),                 // 26: daemon.DeprecatedWarning
+-		(*StartedAt)(nil),                         // 27: daemon.StartedAt
+-		(*OutboundList)(nil),                      // 28: daemon.OutboundList
+-		(*NetworkQualityTestRequest)(nil),         // 29: daemon.NetworkQualityTestRequest
+-		(*NetworkQualityTestProgress)(nil),        // 30: daemon.NetworkQualityTestProgress
+-		(*STUNTestRequest)(nil),                   // 31: daemon.STUNTestRequest
+-		(*STUNTestProgress)(nil),                  // 32: daemon.STUNTestProgress
+-		(*TailscaleStatusUpdate)(nil),             // 33: daemon.TailscaleStatusUpdate
+-		(*TailscaleEndpointStatus)(nil),           // 34: daemon.TailscaleEndpointStatus
+-		(*TailscaleUserGroup)(nil),                // 35: daemon.TailscaleUserGroup
+-		(*TailscalePeer)(nil),                     // 36: daemon.TailscalePeer
+-		(*TailscalePingRequest)(nil),              // 37: daemon.TailscalePingRequest
+-		(*TailscalePingResponse)(nil),             // 38: daemon.TailscalePingResponse
+-		(*SetTailscaleExitNodeRequest)(nil),       // 39: daemon.SetTailscaleExitNodeRequest
+-		(*TailscaleLogoutRequest)(nil),            // 40: daemon.TailscaleLogoutRequest
+-		(*TailscaleCertificateRequest)(nil),       // 41: daemon.TailscaleCertificateRequest
+-		(*TailscaleCertificate)(nil),              // 42: daemon.TailscaleCertificate
+-		(*TailscaleSSHClientMessage)(nil),         // 43: daemon.TailscaleSSHClientMessage
+-		(*TailscaleSSHStart)(nil),                 // 44: daemon.TailscaleSSHStart
+-		(*TailscaleSSHInput)(nil),                 // 45: daemon.TailscaleSSHInput
+-		(*TailscaleSSHResize)(nil),                // 46: daemon.TailscaleSSHResize
+-		(*TailscaleSSHServerMessage)(nil),         // 47: daemon.TailscaleSSHServerMessage
+-		(*TailscaleSSHAuthBanner)(nil),            // 48: daemon.TailscaleSSHAuthBanner
+-		(*TailscaleSSHReady)(nil),                 // 49: daemon.TailscaleSSHReady
+-		(*TailscaleSSHOutput)(nil),                // 50: daemon.TailscaleSSHOutput
+-		(*TailscaleSSHExit)(nil),                  // 51: daemon.TailscaleSSHExit
+-		(*TailscaleSSHError)(nil),                 // 52: daemon.TailscaleSSHError
+-		(*SubscribeTaildropInboxRequest)(nil),     // 53: daemon.SubscribeTaildropInboxRequest
+-		(*MarkTaildropInboxReadRequest)(nil),      // 54: daemon.MarkTaildropInboxReadRequest
+-		(*TaildropInbox)(nil),                     // 55: daemon.TaildropInbox
+-		(*TaildropFile)(nil),                      // 56: daemon.TaildropFile
+-		(*TaildropReceivingFile)(nil),             // 57: daemon.TaildropReceivingFile
+-		(*TaildropSendClientMessage)(nil),         // 58: daemon.TaildropSendClientMessage
+-		(*TaildropSendStart)(nil),                 // 59: daemon.TaildropSendStart
+-		(*TaildropOutgoingFile)(nil),              // 60: daemon.TaildropOutgoingFile
+-		(*TaildropFileChunk)(nil),                 // 61: daemon.TaildropFileChunk
+-		(*TaildropFileDone)(nil),                  // 62: daemon.TaildropFileDone
+-		(*TaildropSendServerMessage)(nil),         // 63: daemon.TaildropSendServerMessage
+-		(*TaildropSendProgress)(nil),              // 64: daemon.TaildropSendProgress
+-		(*DownloadTaildropFileRequest)(nil),       // 65: daemon.DownloadTaildropFileRequest
+-		(*DownloadTaildropFileChunk)(nil),         // 66: daemon.DownloadTaildropFileChunk
+-		(*DeleteTaildropFileRequest)(nil),         // 67: daemon.DeleteTaildropFileRequest
+-		(*CancelTaildropReceivingRequest)(nil),    // 68: daemon.CancelTaildropReceivingRequest
+-		(*USBProviderMessage)(nil),                // 69: daemon.USBProviderMessage
+-		(*USBServerMessage)(nil),                  // 70: daemon.USBServerMessage
+-		(*USBDeviceDescriptor)(nil),               // 71: daemon.USBDeviceDescriptor
+-		(*USBDeviceAttach)(nil),                   // 72: daemon.USBDeviceAttach
+-		(*USBInterface)(nil),                      // 73: daemon.USBInterface
+-		(*USBDeviceDetach)(nil),                   // 74: daemon.USBDeviceDetach
+-		(*USBDeviceReady)(nil),                    // 75: daemon.USBDeviceReady
+-		(*USBURBRequest)(nil),                     // 76: daemon.USBURBRequest
+-		(*USBURBResponse)(nil),                    // 77: daemon.USBURBResponse
+-		(*USBIsoPacket)(nil),                      // 78: daemon.USBIsoPacket
+-		(*USBEndpointAbort)(nil),                  // 79: daemon.USBEndpointAbort
+-		(*USBError)(nil),                          // 80: daemon.USBError
+-		(*USBIPServerStatusUpdate)(nil),           // 81: daemon.USBIPServerStatusUpdate
+-		(*USBIPServerStatus)(nil),                 // 82: daemon.USBIPServerStatus
+-		(*USBSharedDevice)(nil),                   // 83: daemon.USBSharedDevice
+-		(*OpenConnectStatusUpdate)(nil),           // 84: daemon.OpenConnectStatusUpdate
+-		(*OpenConnectEndpointStatus)(nil),         // 85: daemon.OpenConnectEndpointStatus
+-		(*OpenConnectTunnelInfo)(nil),             // 86: daemon.OpenConnectTunnelInfo
+-		(*OpenConnectAuthChallenge)(nil),          // 87: daemon.OpenConnectAuthChallenge
+-		(*OpenConnectAuthForm)(nil),               // 88: daemon.OpenConnectAuthForm
+-		(*OpenConnectAuthFormField)(nil),          // 89: daemon.OpenConnectAuthFormField
+-		(*OpenConnectAuthFormChoice)(nil),         // 90: daemon.OpenConnectAuthFormChoice
+-		(*OpenConnectBrowserRequest)(nil),         // 91: daemon.OpenConnectBrowserRequest
+-		(*OpenConnectBrowserCookie)(nil),          // 92: daemon.OpenConnectBrowserCookie
+-		(*OpenConnectBrowserHeader)(nil),          // 93: daemon.OpenConnectBrowserHeader
+-		(*OpenConnectAuthFormResponse)(nil),       // 94: daemon.OpenConnectAuthFormResponse
+-		(*OpenConnectBrowserResult)(nil),          // 95: daemon.OpenConnectBrowserResult
+-		(*OpenConnectAuthResponseSubmission)(nil), // 96: daemon.OpenConnectAuthResponseSubmission
+-		(*OpenConnectAuthChallengeCancel)(nil),    // 97: daemon.OpenConnectAuthChallengeCancel
+-		(*OpenVPNStatusUpdate)(nil),               // 98: daemon.OpenVPNStatusUpdate
+-		(*OpenVPNEndpointStatus)(nil),             // 99: daemon.OpenVPNEndpointStatus
+-		(*OpenVPNTunnelInfo)(nil),                 // 100: daemon.OpenVPNTunnelInfo
+-		(*OpenVPNChallenge)(nil),                  // 101: daemon.OpenVPNChallenge
+-		(*OpenVPNChallengeSubmission)(nil),        // 102: daemon.OpenVPNChallengeSubmission
+-		(*OpenVPNChallengeCancel)(nil),            // 103: daemon.OpenVPNChallengeCancel
+-		(*NotificationEvent)(nil),                 // 104: daemon.NotificationEvent
+-		(*Notification)(nil),                      // 105: daemon.Notification
+-		(*NotificationCancel)(nil),                // 106: daemon.NotificationCancel
+-		(*Log_Message)(nil),                       // 107: daemon.Log.Message
+-		nil,                                       // 108: daemon.OpenConnectAuthFormResponse.ValuesEntry
+-		(*emptypb.Empty)(nil),                     // 109: google.protobuf.Empty
+-	}
+-)
+-
++var file_daemon_started_service_proto_enumTypes = make([]protoimpl.EnumInfo, 6)
++var file_daemon_started_service_proto_msgTypes = make([]protoimpl.MessageInfo, 106)
++var file_daemon_started_service_proto_goTypes = []any{
++	(LogLevel)(0),                             // 0: daemon.LogLevel
++	(ConnectionEventType)(0),                  // 1: daemon.ConnectionEventType
++	(USBDeviceState)(0),                       // 2: daemon.USBDeviceState
++	(USBBackend)(0),                           // 3: daemon.USBBackend
++	(IPStackStatus)(0),                        // 4: daemon.IPStackStatus
++	(ServiceStatus_Type)(0),                   // 5: daemon.ServiceStatus.Type
++	(*Version)(nil),                           // 6: daemon.Version
++	(*ServiceStatus)(nil),                     // 7: daemon.ServiceStatus
++	(*SubscribeStatusRequest)(nil),            // 8: daemon.SubscribeStatusRequest
++	(*Log)(nil),                               // 9: daemon.Log
++	(*DefaultLogLevel)(nil),                   // 10: daemon.DefaultLogLevel
++	(*Status)(nil),                            // 11: daemon.Status
++	(*Groups)(nil),                            // 12: daemon.Groups
++	(*Group)(nil),                             // 13: daemon.Group
++	(*GroupItem)(nil),                         // 14: daemon.GroupItem
++	(*URLTestRequest)(nil),                    // 15: daemon.URLTestRequest
++	(*SelectOutboundRequest)(nil),             // 16: daemon.SelectOutboundRequest
++	(*SetGroupExpandRequest)(nil),             // 17: daemon.SetGroupExpandRequest
++	(*ClashMode)(nil),                         // 18: daemon.ClashMode
++	(*ClashModeStatus)(nil),                   // 19: daemon.ClashModeStatus
++	(*SubscribeConnectionsRequest)(nil),       // 20: daemon.SubscribeConnectionsRequest
++	(*ConnectionEvent)(nil),                   // 21: daemon.ConnectionEvent
++	(*ConnectionEvents)(nil),                  // 22: daemon.ConnectionEvents
++	(*Connection)(nil),                        // 23: daemon.Connection
++	(*ProcessInfo)(nil),                       // 24: daemon.ProcessInfo
++	(*CloseConnectionRequest)(nil),            // 25: daemon.CloseConnectionRequest
++	(*DeprecatedWarnings)(nil),                // 26: daemon.DeprecatedWarnings
++	(*DeprecatedWarning)(nil),                 // 27: daemon.DeprecatedWarning
++	(*StartedAt)(nil),                         // 28: daemon.StartedAt
++	(*OutboundList)(nil),                      // 29: daemon.OutboundList
++	(*NetworkQualityTestRequest)(nil),         // 30: daemon.NetworkQualityTestRequest
++	(*NetworkQualityTestProgress)(nil),        // 31: daemon.NetworkQualityTestProgress
++	(*STUNTestRequest)(nil),                   // 32: daemon.STUNTestRequest
++	(*STUNTestProgress)(nil),                  // 33: daemon.STUNTestProgress
++	(*TailscaleStatusUpdate)(nil),             // 34: daemon.TailscaleStatusUpdate
++	(*TailscaleEndpointStatus)(nil),           // 35: daemon.TailscaleEndpointStatus
++	(*TailscaleUserGroup)(nil),                // 36: daemon.TailscaleUserGroup
++	(*TailscalePeer)(nil),                     // 37: daemon.TailscalePeer
++	(*TailscalePingRequest)(nil),              // 38: daemon.TailscalePingRequest
++	(*TailscalePingResponse)(nil),             // 39: daemon.TailscalePingResponse
++	(*SetTailscaleExitNodeRequest)(nil),       // 40: daemon.SetTailscaleExitNodeRequest
++	(*TailscaleLogoutRequest)(nil),            // 41: daemon.TailscaleLogoutRequest
++	(*TailscaleCertificateRequest)(nil),       // 42: daemon.TailscaleCertificateRequest
++	(*TailscaleCertificate)(nil),              // 43: daemon.TailscaleCertificate
++	(*TailscaleSSHClientMessage)(nil),         // 44: daemon.TailscaleSSHClientMessage
++	(*TailscaleSSHStart)(nil),                 // 45: daemon.TailscaleSSHStart
++	(*TailscaleSSHInput)(nil),                 // 46: daemon.TailscaleSSHInput
++	(*TailscaleSSHResize)(nil),                // 47: daemon.TailscaleSSHResize
++	(*TailscaleSSHServerMessage)(nil),         // 48: daemon.TailscaleSSHServerMessage
++	(*TailscaleSSHAuthBanner)(nil),            // 49: daemon.TailscaleSSHAuthBanner
++	(*TailscaleSSHReady)(nil),                 // 50: daemon.TailscaleSSHReady
++	(*TailscaleSSHOutput)(nil),                // 51: daemon.TailscaleSSHOutput
++	(*TailscaleSSHExit)(nil),                  // 52: daemon.TailscaleSSHExit
++	(*TailscaleSSHError)(nil),                 // 53: daemon.TailscaleSSHError
++	(*SubscribeTaildropInboxRequest)(nil),     // 54: daemon.SubscribeTaildropInboxRequest
++	(*MarkTaildropInboxReadRequest)(nil),      // 55: daemon.MarkTaildropInboxReadRequest
++	(*TaildropInbox)(nil),                     // 56: daemon.TaildropInbox
++	(*TaildropFile)(nil),                      // 57: daemon.TaildropFile
++	(*TaildropReceivingFile)(nil),             // 58: daemon.TaildropReceivingFile
++	(*TaildropSendClientMessage)(nil),         // 59: daemon.TaildropSendClientMessage
++	(*TaildropSendStart)(nil),                 // 60: daemon.TaildropSendStart
++	(*TaildropOutgoingFile)(nil),              // 61: daemon.TaildropOutgoingFile
++	(*TaildropFileChunk)(nil),                 // 62: daemon.TaildropFileChunk
++	(*TaildropFileDone)(nil),                  // 63: daemon.TaildropFileDone
++	(*TaildropSendServerMessage)(nil),         // 64: daemon.TaildropSendServerMessage
++	(*TaildropSendProgress)(nil),              // 65: daemon.TaildropSendProgress
++	(*DownloadTaildropFileRequest)(nil),       // 66: daemon.DownloadTaildropFileRequest
++	(*DownloadTaildropFileChunk)(nil),         // 67: daemon.DownloadTaildropFileChunk
++	(*DeleteTaildropFileRequest)(nil),         // 68: daemon.DeleteTaildropFileRequest
++	(*CancelTaildropReceivingRequest)(nil),    // 69: daemon.CancelTaildropReceivingRequest
++	(*USBProviderMessage)(nil),                // 70: daemon.USBProviderMessage
++	(*USBServerMessage)(nil),                  // 71: daemon.USBServerMessage
++	(*USBDeviceDescriptor)(nil),               // 72: daemon.USBDeviceDescriptor
++	(*USBDeviceAttach)(nil),                   // 73: daemon.USBDeviceAttach
++	(*USBInterface)(nil),                      // 74: daemon.USBInterface
++	(*USBDeviceDetach)(nil),                   // 75: daemon.USBDeviceDetach
++	(*USBDeviceReady)(nil),                    // 76: daemon.USBDeviceReady
++	(*USBURBRequest)(nil),                     // 77: daemon.USBURBRequest
++	(*USBURBResponse)(nil),                    // 78: daemon.USBURBResponse
++	(*USBIsoPacket)(nil),                      // 79: daemon.USBIsoPacket
++	(*USBEndpointAbort)(nil),                  // 80: daemon.USBEndpointAbort
++	(*USBError)(nil),                          // 81: daemon.USBError
++	(*USBIPServerStatusUpdate)(nil),           // 82: daemon.USBIPServerStatusUpdate
++	(*USBIPServerStatus)(nil),                 // 83: daemon.USBIPServerStatus
++	(*USBSharedDevice)(nil),                   // 84: daemon.USBSharedDevice
++	(*OpenConnectStatusUpdate)(nil),           // 85: daemon.OpenConnectStatusUpdate
++	(*OpenConnectEndpointStatus)(nil),         // 86: daemon.OpenConnectEndpointStatus
++	(*OpenConnectTunnelInfo)(nil),             // 87: daemon.OpenConnectTunnelInfo
++	(*OpenConnectAuthChallenge)(nil),          // 88: daemon.OpenConnectAuthChallenge
++	(*OpenConnectAuthForm)(nil),               // 89: daemon.OpenConnectAuthForm
++	(*OpenConnectAuthFormField)(nil),          // 90: daemon.OpenConnectAuthFormField
++	(*OpenConnectAuthFormChoice)(nil),         // 91: daemon.OpenConnectAuthFormChoice
++	(*OpenConnectBrowserRequest)(nil),         // 92: daemon.OpenConnectBrowserRequest
++	(*OpenConnectBrowserCookie)(nil),          // 93: daemon.OpenConnectBrowserCookie
++	(*OpenConnectBrowserHeader)(nil),          // 94: daemon.OpenConnectBrowserHeader
++	(*OpenConnectAuthFormResponse)(nil),       // 95: daemon.OpenConnectAuthFormResponse
++	(*OpenConnectBrowserResult)(nil),          // 96: daemon.OpenConnectBrowserResult
++	(*OpenConnectAuthResponseSubmission)(nil), // 97: daemon.OpenConnectAuthResponseSubmission
++	(*OpenConnectAuthChallengeCancel)(nil),    // 98: daemon.OpenConnectAuthChallengeCancel
++	(*OpenVPNStatusUpdate)(nil),               // 99: daemon.OpenVPNStatusUpdate
++	(*OpenVPNEndpointStatus)(nil),             // 100: daemon.OpenVPNEndpointStatus
++	(*OpenVPNTunnelInfo)(nil),                 // 101: daemon.OpenVPNTunnelInfo
++	(*OpenVPNChallenge)(nil),                  // 102: daemon.OpenVPNChallenge
++	(*OpenVPNChallengeSubmission)(nil),        // 103: daemon.OpenVPNChallengeSubmission
++	(*OpenVPNChallengeCancel)(nil),            // 104: daemon.OpenVPNChallengeCancel
++	(*NotificationEvent)(nil),                 // 105: daemon.NotificationEvent
++	(*Notification)(nil),                      // 106: daemon.Notification
++	(*NotificationCancel)(nil),                // 107: daemon.NotificationCancel
++	(*IPStackCapabilities)(nil),               // 108: daemon.IPStackCapabilities
++	(*OutboundIPStack)(nil),                   // 109: daemon.OutboundIPStack
++	(*Log_Message)(nil),                       // 110: daemon.Log.Message
++	nil,                                       // 111: daemon.OpenConnectAuthFormResponse.ValuesEntry
++	(*emptypb.Empty)(nil),                     // 112: google.protobuf.Empty
++}
+ var file_daemon_started_service_proto_depIdxs = []int32{
+-	4,   // 0: daemon.ServiceStatus.status:type_name -> daemon.ServiceStatus.Type
+-	107, // 1: daemon.Log.messages:type_name -> daemon.Log.Message
++	5,   // 0: daemon.ServiceStatus.status:type_name -> daemon.ServiceStatus.Type
++	110, // 1: daemon.Log.messages:type_name -> daemon.Log.Message
+ 	0,   // 2: daemon.DefaultLogLevel.level:type_name -> daemon.LogLevel
+-	12,  // 3: daemon.Groups.group:type_name -> daemon.Group
+-	13,  // 4: daemon.Group.items:type_name -> daemon.GroupItem
+-	1,   // 5: daemon.ConnectionEvent.type:type_name -> daemon.ConnectionEventType
+-	22,  // 6: daemon.ConnectionEvent.connection:type_name -> daemon.Connection
+-	20,  // 7: daemon.ConnectionEvents.events:type_name -> daemon.ConnectionEvent
+-	23,  // 8: daemon.Connection.processInfo:type_name -> daemon.ProcessInfo
+-	26,  // 9: daemon.DeprecatedWarnings.warnings:type_name -> daemon.DeprecatedWarning
+-	13,  // 10: daemon.OutboundList.outbounds:type_name -> daemon.GroupItem
+-	34,  // 11: daemon.TailscaleStatusUpdate.endpoints:type_name -> daemon.TailscaleEndpointStatus
+-	36,  // 12: daemon.TailscaleEndpointStatus.self:type_name -> daemon.TailscalePeer
+-	35,  // 13: daemon.TailscaleEndpointStatus.userGroups:type_name -> daemon.TailscaleUserGroup
+-	36,  // 14: daemon.TailscaleEndpointStatus.exitNode:type_name -> daemon.TailscalePeer
+-	36,  // 15: daemon.TailscaleUserGroup.peers:type_name -> daemon.TailscalePeer
+-	44,  // 16: daemon.TailscaleSSHClientMessage.start:type_name -> daemon.TailscaleSSHStart
+-	45,  // 17: daemon.TailscaleSSHClientMessage.input:type_name -> daemon.TailscaleSSHInput
+-	46,  // 18: daemon.TailscaleSSHClientMessage.resize:type_name -> daemon.TailscaleSSHResize
+-	48,  // 19: daemon.TailscaleSSHServerMessage.authBanner:type_name -> daemon.TailscaleSSHAuthBanner
+-	49,  // 20: daemon.TailscaleSSHServerMessage.ready:type_name -> daemon.TailscaleSSHReady
+-	50,  // 21: daemon.TailscaleSSHServerMessage.output:type_name -> daemon.TailscaleSSHOutput
+-	51,  // 22: daemon.TailscaleSSHServerMessage.exit:type_name -> daemon.TailscaleSSHExit
+-	52,  // 23: daemon.TailscaleSSHServerMessage.error:type_name -> daemon.TailscaleSSHError
+-	56,  // 24: daemon.TaildropInbox.files:type_name -> daemon.TaildropFile
+-	57,  // 25: daemon.TaildropInbox.receiving:type_name -> daemon.TaildropReceivingFile
+-	59,  // 26: daemon.TaildropSendClientMessage.start:type_name -> daemon.TaildropSendStart
+-	61,  // 27: daemon.TaildropSendClientMessage.chunk:type_name -> daemon.TaildropFileChunk
+-	62,  // 28: daemon.TaildropSendClientMessage.fileDone:type_name -> daemon.TaildropFileDone
+-	60,  // 29: daemon.TaildropSendStart.files:type_name -> daemon.TaildropOutgoingFile
+-	64,  // 30: daemon.TaildropSendServerMessage.progress:type_name -> daemon.TaildropSendProgress
+-	72,  // 31: daemon.USBProviderMessage.attach:type_name -> daemon.USBDeviceAttach
+-	74,  // 32: daemon.USBProviderMessage.detach:type_name -> daemon.USBDeviceDetach
+-	77,  // 33: daemon.USBProviderMessage.urbResponse:type_name -> daemon.USBURBResponse
+-	75,  // 34: daemon.USBServerMessage.ready:type_name -> daemon.USBDeviceReady
+-	76,  // 35: daemon.USBServerMessage.urbRequest:type_name -> daemon.USBURBRequest
+-	79,  // 36: daemon.USBServerMessage.abort:type_name -> daemon.USBEndpointAbort
+-	80,  // 37: daemon.USBServerMessage.error:type_name -> daemon.USBError
+-	73,  // 38: daemon.USBDeviceDescriptor.interfaces:type_name -> daemon.USBInterface
+-	71,  // 39: daemon.USBDeviceAttach.descriptor:type_name -> daemon.USBDeviceDescriptor
+-	78,  // 40: daemon.USBURBRequest.isoPackets:type_name -> daemon.USBIsoPacket
+-	78,  // 41: daemon.USBURBResponse.isoPackets:type_name -> daemon.USBIsoPacket
+-	82,  // 42: daemon.USBIPServerStatusUpdate.servers:type_name -> daemon.USBIPServerStatus
+-	83,  // 43: daemon.USBIPServerStatus.devices:type_name -> daemon.USBSharedDevice
+-	71,  // 44: daemon.USBSharedDevice.descriptor:type_name -> daemon.USBDeviceDescriptor
+-	3,   // 45: daemon.USBSharedDevice.backend:type_name -> daemon.USBBackend
+-	2,   // 46: daemon.USBSharedDevice.state:type_name -> daemon.USBDeviceState
+-	85,  // 47: daemon.OpenConnectStatusUpdate.endpoints:type_name -> daemon.OpenConnectEndpointStatus
+-	87,  // 48: daemon.OpenConnectEndpointStatus.authChallenge:type_name -> daemon.OpenConnectAuthChallenge
+-	86,  // 49: daemon.OpenConnectEndpointStatus.tunnelInfo:type_name -> daemon.OpenConnectTunnelInfo
+-	88,  // 50: daemon.OpenConnectAuthChallenge.form:type_name -> daemon.OpenConnectAuthForm
+-	91,  // 51: daemon.OpenConnectAuthChallenge.browser:type_name -> daemon.OpenConnectBrowserRequest
+-	89,  // 52: daemon.OpenConnectAuthForm.fields:type_name -> daemon.OpenConnectAuthFormField
+-	90,  // 53: daemon.OpenConnectAuthFormField.options:type_name -> daemon.OpenConnectAuthFormChoice
+-	108, // 54: daemon.OpenConnectAuthFormResponse.values:type_name -> daemon.OpenConnectAuthFormResponse.ValuesEntry
+-	92,  // 55: daemon.OpenConnectBrowserResult.cookies:type_name -> daemon.OpenConnectBrowserCookie
+-	93,  // 56: daemon.OpenConnectBrowserResult.headers:type_name -> daemon.OpenConnectBrowserHeader
+-	94,  // 57: daemon.OpenConnectAuthResponseSubmission.form:type_name -> daemon.OpenConnectAuthFormResponse
+-	95,  // 58: daemon.OpenConnectAuthResponseSubmission.browser:type_name -> daemon.OpenConnectBrowserResult
+-	99,  // 59: daemon.OpenVPNStatusUpdate.endpoints:type_name -> daemon.OpenVPNEndpointStatus
+-	101, // 60: daemon.OpenVPNEndpointStatus.challenge:type_name -> daemon.OpenVPNChallenge
+-	100, // 61: daemon.OpenVPNEndpointStatus.tunnelInfo:type_name -> daemon.OpenVPNTunnelInfo
+-	105, // 62: daemon.NotificationEvent.send:type_name -> daemon.Notification
+-	106, // 63: daemon.NotificationEvent.cancel:type_name -> daemon.NotificationCancel
+-	0,   // 64: daemon.Log.Message.level:type_name -> daemon.LogLevel
+-	109, // 65: daemon.StartedService.GetVersion:input_type -> google.protobuf.Empty
+-	109, // 66: daemon.StartedService.SubscribeServiceStatus:input_type -> google.protobuf.Empty
+-	109, // 67: daemon.StartedService.SubscribeLog:input_type -> google.protobuf.Empty
+-	109, // 68: daemon.StartedService.GetDefaultLogLevel:input_type -> google.protobuf.Empty
+-	109, // 69: daemon.StartedService.ClearLogs:input_type -> google.protobuf.Empty
+-	7,   // 70: daemon.StartedService.SubscribeStatus:input_type -> daemon.SubscribeStatusRequest
+-	109, // 71: daemon.StartedService.SubscribeGroups:input_type -> google.protobuf.Empty
+-	109, // 72: daemon.StartedService.GetClashModeStatus:input_type -> google.protobuf.Empty
+-	109, // 73: daemon.StartedService.SubscribeClashMode:input_type -> google.protobuf.Empty
+-	17,  // 74: daemon.StartedService.SetClashMode:input_type -> daemon.ClashMode
+-	14,  // 75: daemon.StartedService.URLTest:input_type -> daemon.URLTestRequest
+-	15,  // 76: daemon.StartedService.SelectOutbound:input_type -> daemon.SelectOutboundRequest
+-	16,  // 77: daemon.StartedService.SetGroupExpand:input_type -> daemon.SetGroupExpandRequest
+-	19,  // 78: daemon.StartedService.SubscribeConnections:input_type -> daemon.SubscribeConnectionsRequest
+-	24,  // 79: daemon.StartedService.CloseConnection:input_type -> daemon.CloseConnectionRequest
+-	109, // 80: daemon.StartedService.CloseAllConnections:input_type -> google.protobuf.Empty
+-	109, // 81: daemon.StartedService.GetDeprecatedWarnings:input_type -> google.protobuf.Empty
+-	109, // 82: daemon.StartedService.GetStartedAt:input_type -> google.protobuf.Empty
+-	109, // 83: daemon.StartedService.SubscribeOutbounds:input_type -> google.protobuf.Empty
+-	29,  // 84: daemon.StartedService.StartNetworkQualityTest:input_type -> daemon.NetworkQualityTestRequest
+-	31,  // 85: daemon.StartedService.StartSTUNTest:input_type -> daemon.STUNTestRequest
+-	109, // 86: daemon.StartedService.SubscribeTailscaleStatus:input_type -> google.protobuf.Empty
+-	37,  // 87: daemon.StartedService.StartTailscalePing:input_type -> daemon.TailscalePingRequest
+-	39,  // 88: daemon.StartedService.SetTailscaleExitNode:input_type -> daemon.SetTailscaleExitNodeRequest
+-	40,  // 89: daemon.StartedService.TailscaleLogout:input_type -> daemon.TailscaleLogoutRequest
+-	41,  // 90: daemon.StartedService.GetTailscaleCertificate:input_type -> daemon.TailscaleCertificateRequest
+-	43,  // 91: daemon.StartedService.StartTailscaleSSHSession:input_type -> daemon.TailscaleSSHClientMessage
+-	53,  // 92: daemon.StartedService.SubscribeTaildropInbox:input_type -> daemon.SubscribeTaildropInboxRequest
+-	54,  // 93: daemon.StartedService.MarkTaildropInboxRead:input_type -> daemon.MarkTaildropInboxReadRequest
+-	58,  // 94: daemon.StartedService.SendTaildropFiles:input_type -> daemon.TaildropSendClientMessage
+-	65,  // 95: daemon.StartedService.DownloadTaildropFile:input_type -> daemon.DownloadTaildropFileRequest
+-	67,  // 96: daemon.StartedService.DeleteTaildropFile:input_type -> daemon.DeleteTaildropFileRequest
+-	68,  // 97: daemon.StartedService.CancelTaildropReceiving:input_type -> daemon.CancelTaildropReceivingRequest
+-	69,  // 98: daemon.StartedService.ProvideUSBDevices:input_type -> daemon.USBProviderMessage
+-	109, // 99: daemon.StartedService.SubscribeUSBIPServerStatus:input_type -> google.protobuf.Empty
+-	109, // 100: daemon.StartedService.SubscribeOpenConnectStatus:input_type -> google.protobuf.Empty
+-	96,  // 101: daemon.StartedService.SubmitOpenConnectAuthResponse:input_type -> daemon.OpenConnectAuthResponseSubmission
+-	97,  // 102: daemon.StartedService.CancelOpenConnectAuthChallenge:input_type -> daemon.OpenConnectAuthChallengeCancel
+-	109, // 103: daemon.StartedService.SubscribeOpenVPNStatus:input_type -> google.protobuf.Empty
+-	102, // 104: daemon.StartedService.SubmitOpenVPNChallengeResponse:input_type -> daemon.OpenVPNChallengeSubmission
+-	103, // 105: daemon.StartedService.CancelOpenVPNChallenge:input_type -> daemon.OpenVPNChallengeCancel
+-	109, // 106: daemon.StartedService.SubscribeNotifications:input_type -> google.protobuf.Empty
+-	5,   // 107: daemon.StartedService.GetVersion:output_type -> daemon.Version
+-	6,   // 108: daemon.StartedService.SubscribeServiceStatus:output_type -> daemon.ServiceStatus
+-	8,   // 109: daemon.StartedService.SubscribeLog:output_type -> daemon.Log
+-	9,   // 110: daemon.StartedService.GetDefaultLogLevel:output_type -> daemon.DefaultLogLevel
+-	109, // 111: daemon.StartedService.ClearLogs:output_type -> google.protobuf.Empty
+-	10,  // 112: daemon.StartedService.SubscribeStatus:output_type -> daemon.Status
+-	11,  // 113: daemon.StartedService.SubscribeGroups:output_type -> daemon.Groups
+-	18,  // 114: daemon.StartedService.GetClashModeStatus:output_type -> daemon.ClashModeStatus
+-	17,  // 115: daemon.StartedService.SubscribeClashMode:output_type -> daemon.ClashMode
+-	109, // 116: daemon.StartedService.SetClashMode:output_type -> google.protobuf.Empty
+-	109, // 117: daemon.StartedService.URLTest:output_type -> google.protobuf.Empty
+-	109, // 118: daemon.StartedService.SelectOutbound:output_type -> google.protobuf.Empty
+-	109, // 119: daemon.StartedService.SetGroupExpand:output_type -> google.protobuf.Empty
+-	21,  // 120: daemon.StartedService.SubscribeConnections:output_type -> daemon.ConnectionEvents
+-	109, // 121: daemon.StartedService.CloseConnection:output_type -> google.protobuf.Empty
+-	109, // 122: daemon.StartedService.CloseAllConnections:output_type -> google.protobuf.Empty
+-	25,  // 123: daemon.StartedService.GetDeprecatedWarnings:output_type -> daemon.DeprecatedWarnings
+-	27,  // 124: daemon.StartedService.GetStartedAt:output_type -> daemon.StartedAt
+-	28,  // 125: daemon.StartedService.SubscribeOutbounds:output_type -> daemon.OutboundList
+-	30,  // 126: daemon.StartedService.StartNetworkQualityTest:output_type -> daemon.NetworkQualityTestProgress
+-	32,  // 127: daemon.StartedService.StartSTUNTest:output_type -> daemon.STUNTestProgress
+-	33,  // 128: daemon.StartedService.SubscribeTailscaleStatus:output_type -> daemon.TailscaleStatusUpdate
+-	38,  // 129: daemon.StartedService.StartTailscalePing:output_type -> daemon.TailscalePingResponse
+-	109, // 130: daemon.StartedService.SetTailscaleExitNode:output_type -> google.protobuf.Empty
+-	109, // 131: daemon.StartedService.TailscaleLogout:output_type -> google.protobuf.Empty
+-	42,  // 132: daemon.StartedService.GetTailscaleCertificate:output_type -> daemon.TailscaleCertificate
+-	47,  // 133: daemon.StartedService.StartTailscaleSSHSession:output_type -> daemon.TailscaleSSHServerMessage
+-	55,  // 134: daemon.StartedService.SubscribeTaildropInbox:output_type -> daemon.TaildropInbox
+-	109, // 135: daemon.StartedService.MarkTaildropInboxRead:output_type -> google.protobuf.Empty
+-	63,  // 136: daemon.StartedService.SendTaildropFiles:output_type -> daemon.TaildropSendServerMessage
+-	66,  // 137: daemon.StartedService.DownloadTaildropFile:output_type -> daemon.DownloadTaildropFileChunk
+-	109, // 138: daemon.StartedService.DeleteTaildropFile:output_type -> google.protobuf.Empty
+-	109, // 139: daemon.StartedService.CancelTaildropReceiving:output_type -> google.protobuf.Empty
+-	70,  // 140: daemon.StartedService.ProvideUSBDevices:output_type -> daemon.USBServerMessage
+-	81,  // 141: daemon.StartedService.SubscribeUSBIPServerStatus:output_type -> daemon.USBIPServerStatusUpdate
+-	84,  // 142: daemon.StartedService.SubscribeOpenConnectStatus:output_type -> daemon.OpenConnectStatusUpdate
+-	109, // 143: daemon.StartedService.SubmitOpenConnectAuthResponse:output_type -> google.protobuf.Empty
+-	109, // 144: daemon.StartedService.CancelOpenConnectAuthChallenge:output_type -> google.protobuf.Empty
+-	98,  // 145: daemon.StartedService.SubscribeOpenVPNStatus:output_type -> daemon.OpenVPNStatusUpdate
+-	109, // 146: daemon.StartedService.SubmitOpenVPNChallengeResponse:output_type -> google.protobuf.Empty
+-	109, // 147: daemon.StartedService.CancelOpenVPNChallenge:output_type -> google.protobuf.Empty
+-	104, // 148: daemon.StartedService.SubscribeNotifications:output_type -> daemon.NotificationEvent
+-	107, // [107:149] is the sub-list for method output_type
+-	65,  // [65:107] is the sub-list for method input_type
+-	65,  // [65:65] is the sub-list for extension type_name
+-	65,  // [65:65] is the sub-list for extension extendee
+-	0,   // [0:65] is the sub-list for field type_name
++	13,  // 3: daemon.Groups.group:type_name -> daemon.Group
++	14,  // 4: daemon.Group.items:type_name -> daemon.GroupItem
++	109, // 5: daemon.GroupItem.ipStack:type_name -> daemon.OutboundIPStack
++	1,   // 6: daemon.ConnectionEvent.type:type_name -> daemon.ConnectionEventType
++	23,  // 7: daemon.ConnectionEvent.connection:type_name -> daemon.Connection
++	21,  // 8: daemon.ConnectionEvents.events:type_name -> daemon.ConnectionEvent
++	24,  // 9: daemon.Connection.processInfo:type_name -> daemon.ProcessInfo
++	27,  // 10: daemon.DeprecatedWarnings.warnings:type_name -> daemon.DeprecatedWarning
++	14,  // 11: daemon.OutboundList.outbounds:type_name -> daemon.GroupItem
++	35,  // 12: daemon.TailscaleStatusUpdate.endpoints:type_name -> daemon.TailscaleEndpointStatus
++	37,  // 13: daemon.TailscaleEndpointStatus.self:type_name -> daemon.TailscalePeer
++	36,  // 14: daemon.TailscaleEndpointStatus.userGroups:type_name -> daemon.TailscaleUserGroup
++	37,  // 15: daemon.TailscaleEndpointStatus.exitNode:type_name -> daemon.TailscalePeer
++	37,  // 16: daemon.TailscaleUserGroup.peers:type_name -> daemon.TailscalePeer
++	45,  // 17: daemon.TailscaleSSHClientMessage.start:type_name -> daemon.TailscaleSSHStart
++	46,  // 18: daemon.TailscaleSSHClientMessage.input:type_name -> daemon.TailscaleSSHInput
++	47,  // 19: daemon.TailscaleSSHClientMessage.resize:type_name -> daemon.TailscaleSSHResize
++	49,  // 20: daemon.TailscaleSSHServerMessage.authBanner:type_name -> daemon.TailscaleSSHAuthBanner
++	50,  // 21: daemon.TailscaleSSHServerMessage.ready:type_name -> daemon.TailscaleSSHReady
++	51,  // 22: daemon.TailscaleSSHServerMessage.output:type_name -> daemon.TailscaleSSHOutput
++	52,  // 23: daemon.TailscaleSSHServerMessage.exit:type_name -> daemon.TailscaleSSHExit
++	53,  // 24: daemon.TailscaleSSHServerMessage.error:type_name -> daemon.TailscaleSSHError
++	57,  // 25: daemon.TaildropInbox.files:type_name -> daemon.TaildropFile
++	58,  // 26: daemon.TaildropInbox.receiving:type_name -> daemon.TaildropReceivingFile
++	60,  // 27: daemon.TaildropSendClientMessage.start:type_name -> daemon.TaildropSendStart
++	62,  // 28: daemon.TaildropSendClientMessage.chunk:type_name -> daemon.TaildropFileChunk
++	63,  // 29: daemon.TaildropSendClientMessage.fileDone:type_name -> daemon.TaildropFileDone
++	61,  // 30: daemon.TaildropSendStart.files:type_name -> daemon.TaildropOutgoingFile
++	65,  // 31: daemon.TaildropSendServerMessage.progress:type_name -> daemon.TaildropSendProgress
++	73,  // 32: daemon.USBProviderMessage.attach:type_name -> daemon.USBDeviceAttach
++	75,  // 33: daemon.USBProviderMessage.detach:type_name -> daemon.USBDeviceDetach
++	78,  // 34: daemon.USBProviderMessage.urbResponse:type_name -> daemon.USBURBResponse
++	76,  // 35: daemon.USBServerMessage.ready:type_name -> daemon.USBDeviceReady
++	77,  // 36: daemon.USBServerMessage.urbRequest:type_name -> daemon.USBURBRequest
++	80,  // 37: daemon.USBServerMessage.abort:type_name -> daemon.USBEndpointAbort
++	81,  // 38: daemon.USBServerMessage.error:type_name -> daemon.USBError
++	74,  // 39: daemon.USBDeviceDescriptor.interfaces:type_name -> daemon.USBInterface
++	72,  // 40: daemon.USBDeviceAttach.descriptor:type_name -> daemon.USBDeviceDescriptor
++	79,  // 41: daemon.USBURBRequest.isoPackets:type_name -> daemon.USBIsoPacket
++	79,  // 42: daemon.USBURBResponse.isoPackets:type_name -> daemon.USBIsoPacket
++	83,  // 43: daemon.USBIPServerStatusUpdate.servers:type_name -> daemon.USBIPServerStatus
++	84,  // 44: daemon.USBIPServerStatus.devices:type_name -> daemon.USBSharedDevice
++	72,  // 45: daemon.USBSharedDevice.descriptor:type_name -> daemon.USBDeviceDescriptor
++	3,   // 46: daemon.USBSharedDevice.backend:type_name -> daemon.USBBackend
++	2,   // 47: daemon.USBSharedDevice.state:type_name -> daemon.USBDeviceState
++	86,  // 48: daemon.OpenConnectStatusUpdate.endpoints:type_name -> daemon.OpenConnectEndpointStatus
++	88,  // 49: daemon.OpenConnectEndpointStatus.authChallenge:type_name -> daemon.OpenConnectAuthChallenge
++	87,  // 50: daemon.OpenConnectEndpointStatus.tunnelInfo:type_name -> daemon.OpenConnectTunnelInfo
++	89,  // 51: daemon.OpenConnectAuthChallenge.form:type_name -> daemon.OpenConnectAuthForm
++	92,  // 52: daemon.OpenConnectAuthChallenge.browser:type_name -> daemon.OpenConnectBrowserRequest
++	90,  // 53: daemon.OpenConnectAuthForm.fields:type_name -> daemon.OpenConnectAuthFormField
++	91,  // 54: daemon.OpenConnectAuthFormField.options:type_name -> daemon.OpenConnectAuthFormChoice
++	111, // 55: daemon.OpenConnectAuthFormResponse.values:type_name -> daemon.OpenConnectAuthFormResponse.ValuesEntry
++	93,  // 56: daemon.OpenConnectBrowserResult.cookies:type_name -> daemon.OpenConnectBrowserCookie
++	94,  // 57: daemon.OpenConnectBrowserResult.headers:type_name -> daemon.OpenConnectBrowserHeader
++	95,  // 58: daemon.OpenConnectAuthResponseSubmission.form:type_name -> daemon.OpenConnectAuthFormResponse
++	96,  // 59: daemon.OpenConnectAuthResponseSubmission.browser:type_name -> daemon.OpenConnectBrowserResult
++	100, // 60: daemon.OpenVPNStatusUpdate.endpoints:type_name -> daemon.OpenVPNEndpointStatus
++	102, // 61: daemon.OpenVPNEndpointStatus.challenge:type_name -> daemon.OpenVPNChallenge
++	101, // 62: daemon.OpenVPNEndpointStatus.tunnelInfo:type_name -> daemon.OpenVPNTunnelInfo
++	106, // 63: daemon.NotificationEvent.send:type_name -> daemon.Notification
++	107, // 64: daemon.NotificationEvent.cancel:type_name -> daemon.NotificationCancel
++	4,   // 65: daemon.IPStackCapabilities.ipv4:type_name -> daemon.IPStackStatus
++	4,   // 66: daemon.IPStackCapabilities.ipv6:type_name -> daemon.IPStackStatus
++	108, // 67: daemon.OutboundIPStack.tcp:type_name -> daemon.IPStackCapabilities
++	108, // 68: daemon.OutboundIPStack.udp:type_name -> daemon.IPStackCapabilities
++	0,   // 69: daemon.Log.Message.level:type_name -> daemon.LogLevel
++	112, // 70: daemon.StartedService.GetVersion:input_type -> google.protobuf.Empty
++	112, // 71: daemon.StartedService.SubscribeServiceStatus:input_type -> google.protobuf.Empty
++	112, // 72: daemon.StartedService.SubscribeLog:input_type -> google.protobuf.Empty
++	112, // 73: daemon.StartedService.GetDefaultLogLevel:input_type -> google.protobuf.Empty
++	112, // 74: daemon.StartedService.ClearLogs:input_type -> google.protobuf.Empty
++	8,   // 75: daemon.StartedService.SubscribeStatus:input_type -> daemon.SubscribeStatusRequest
++	112, // 76: daemon.StartedService.SubscribeGroups:input_type -> google.protobuf.Empty
++	112, // 77: daemon.StartedService.GetClashModeStatus:input_type -> google.protobuf.Empty
++	112, // 78: daemon.StartedService.SubscribeClashMode:input_type -> google.protobuf.Empty
++	18,  // 79: daemon.StartedService.SetClashMode:input_type -> daemon.ClashMode
++	15,  // 80: daemon.StartedService.URLTest:input_type -> daemon.URLTestRequest
++	16,  // 81: daemon.StartedService.SelectOutbound:input_type -> daemon.SelectOutboundRequest
++	17,  // 82: daemon.StartedService.SetGroupExpand:input_type -> daemon.SetGroupExpandRequest
++	20,  // 83: daemon.StartedService.SubscribeConnections:input_type -> daemon.SubscribeConnectionsRequest
++	25,  // 84: daemon.StartedService.CloseConnection:input_type -> daemon.CloseConnectionRequest
++	112, // 85: daemon.StartedService.CloseAllConnections:input_type -> google.protobuf.Empty
++	112, // 86: daemon.StartedService.GetDeprecatedWarnings:input_type -> google.protobuf.Empty
++	112, // 87: daemon.StartedService.GetStartedAt:input_type -> google.protobuf.Empty
++	112, // 88: daemon.StartedService.SubscribeOutbounds:input_type -> google.protobuf.Empty
++	30,  // 89: daemon.StartedService.StartNetworkQualityTest:input_type -> daemon.NetworkQualityTestRequest
++	32,  // 90: daemon.StartedService.StartSTUNTest:input_type -> daemon.STUNTestRequest
++	112, // 91: daemon.StartedService.SubscribeTailscaleStatus:input_type -> google.protobuf.Empty
++	38,  // 92: daemon.StartedService.StartTailscalePing:input_type -> daemon.TailscalePingRequest
++	40,  // 93: daemon.StartedService.SetTailscaleExitNode:input_type -> daemon.SetTailscaleExitNodeRequest
++	41,  // 94: daemon.StartedService.TailscaleLogout:input_type -> daemon.TailscaleLogoutRequest
++	42,  // 95: daemon.StartedService.GetTailscaleCertificate:input_type -> daemon.TailscaleCertificateRequest
++	44,  // 96: daemon.StartedService.StartTailscaleSSHSession:input_type -> daemon.TailscaleSSHClientMessage
++	54,  // 97: daemon.StartedService.SubscribeTaildropInbox:input_type -> daemon.SubscribeTaildropInboxRequest
++	55,  // 98: daemon.StartedService.MarkTaildropInboxRead:input_type -> daemon.MarkTaildropInboxReadRequest
++	59,  // 99: daemon.StartedService.SendTaildropFiles:input_type -> daemon.TaildropSendClientMessage
++	66,  // 100: daemon.StartedService.DownloadTaildropFile:input_type -> daemon.DownloadTaildropFileRequest
++	68,  // 101: daemon.StartedService.DeleteTaildropFile:input_type -> daemon.DeleteTaildropFileRequest
++	69,  // 102: daemon.StartedService.CancelTaildropReceiving:input_type -> daemon.CancelTaildropReceivingRequest
++	70,  // 103: daemon.StartedService.ProvideUSBDevices:input_type -> daemon.USBProviderMessage
++	112, // 104: daemon.StartedService.SubscribeUSBIPServerStatus:input_type -> google.protobuf.Empty
++	112, // 105: daemon.StartedService.SubscribeOpenConnectStatus:input_type -> google.protobuf.Empty
++	97,  // 106: daemon.StartedService.SubmitOpenConnectAuthResponse:input_type -> daemon.OpenConnectAuthResponseSubmission
++	98,  // 107: daemon.StartedService.CancelOpenConnectAuthChallenge:input_type -> daemon.OpenConnectAuthChallengeCancel
++	112, // 108: daemon.StartedService.SubscribeOpenVPNStatus:input_type -> google.protobuf.Empty
++	103, // 109: daemon.StartedService.SubmitOpenVPNChallengeResponse:input_type -> daemon.OpenVPNChallengeSubmission
++	104, // 110: daemon.StartedService.CancelOpenVPNChallenge:input_type -> daemon.OpenVPNChallengeCancel
++	112, // 111: daemon.StartedService.SubscribeNotifications:input_type -> google.protobuf.Empty
++	6,   // 112: daemon.StartedService.GetVersion:output_type -> daemon.Version
++	7,   // 113: daemon.StartedService.SubscribeServiceStatus:output_type -> daemon.ServiceStatus
++	9,   // 114: daemon.StartedService.SubscribeLog:output_type -> daemon.Log
++	10,  // 115: daemon.StartedService.GetDefaultLogLevel:output_type -> daemon.DefaultLogLevel
++	112, // 116: daemon.StartedService.ClearLogs:output_type -> google.protobuf.Empty
++	11,  // 117: daemon.StartedService.SubscribeStatus:output_type -> daemon.Status
++	12,  // 118: daemon.StartedService.SubscribeGroups:output_type -> daemon.Groups
++	19,  // 119: daemon.StartedService.GetClashModeStatus:output_type -> daemon.ClashModeStatus
++	18,  // 120: daemon.StartedService.SubscribeClashMode:output_type -> daemon.ClashMode
++	112, // 121: daemon.StartedService.SetClashMode:output_type -> google.protobuf.Empty
++	112, // 122: daemon.StartedService.URLTest:output_type -> google.protobuf.Empty
++	112, // 123: daemon.StartedService.SelectOutbound:output_type -> google.protobuf.Empty
++	112, // 124: daemon.StartedService.SetGroupExpand:output_type -> google.protobuf.Empty
++	22,  // 125: daemon.StartedService.SubscribeConnections:output_type -> daemon.ConnectionEvents
++	112, // 126: daemon.StartedService.CloseConnection:output_type -> google.protobuf.Empty
++	112, // 127: daemon.StartedService.CloseAllConnections:output_type -> google.protobuf.Empty
++	26,  // 128: daemon.StartedService.GetDeprecatedWarnings:output_type -> daemon.DeprecatedWarnings
++	28,  // 129: daemon.StartedService.GetStartedAt:output_type -> daemon.StartedAt
++	29,  // 130: daemon.StartedService.SubscribeOutbounds:output_type -> daemon.OutboundList
++	31,  // 131: daemon.StartedService.StartNetworkQualityTest:output_type -> daemon.NetworkQualityTestProgress
++	33,  // 132: daemon.StartedService.StartSTUNTest:output_type -> daemon.STUNTestProgress
++	34,  // 133: daemon.StartedService.SubscribeTailscaleStatus:output_type -> daemon.TailscaleStatusUpdate
++	39,  // 134: daemon.StartedService.StartTailscalePing:output_type -> daemon.TailscalePingResponse
++	112, // 135: daemon.StartedService.SetTailscaleExitNode:output_type -> google.protobuf.Empty
++	112, // 136: daemon.StartedService.TailscaleLogout:output_type -> google.protobuf.Empty
++	43,  // 137: daemon.StartedService.GetTailscaleCertificate:output_type -> daemon.TailscaleCertificate
++	48,  // 138: daemon.StartedService.StartTailscaleSSHSession:output_type -> daemon.TailscaleSSHServerMessage
++	56,  // 139: daemon.StartedService.SubscribeTaildropInbox:output_type -> daemon.TaildropInbox
++	112, // 140: daemon.StartedService.MarkTaildropInboxRead:output_type -> google.protobuf.Empty
++	64,  // 141: daemon.StartedService.SendTaildropFiles:output_type -> daemon.TaildropSendServerMessage
++	67,  // 142: daemon.StartedService.DownloadTaildropFile:output_type -> daemon.DownloadTaildropFileChunk
++	112, // 143: daemon.StartedService.DeleteTaildropFile:output_type -> google.protobuf.Empty
++	112, // 144: daemon.StartedService.CancelTaildropReceiving:output_type -> google.protobuf.Empty
++	71,  // 145: daemon.StartedService.ProvideUSBDevices:output_type -> daemon.USBServerMessage
++	82,  // 146: daemon.StartedService.SubscribeUSBIPServerStatus:output_type -> daemon.USBIPServerStatusUpdate
++	85,  // 147: daemon.StartedService.SubscribeOpenConnectStatus:output_type -> daemon.OpenConnectStatusUpdate
++	112, // 148: daemon.StartedService.SubmitOpenConnectAuthResponse:output_type -> google.protobuf.Empty
++	112, // 149: daemon.StartedService.CancelOpenConnectAuthChallenge:output_type -> google.protobuf.Empty
++	99,  // 150: daemon.StartedService.SubscribeOpenVPNStatus:output_type -> daemon.OpenVPNStatusUpdate
++	112, // 151: daemon.StartedService.SubmitOpenVPNChallengeResponse:output_type -> google.protobuf.Empty
++	112, // 152: daemon.StartedService.CancelOpenVPNChallenge:output_type -> google.protobuf.Empty
++	105, // 153: daemon.StartedService.SubscribeNotifications:output_type -> daemon.NotificationEvent
++	112, // [112:154] is the sub-list for method output_type
++	70,  // [70:112] is the sub-list for method input_type
++	70,  // [70:70] is the sub-list for extension type_name
++	70,  // [70:70] is the sub-list for extension extendee
++	0,   // [0:70] is the sub-list for field type_name
+ }
+ 
+ func init() { file_daemon_started_service_proto_init() }
+@@ -8425,8 +8603,8 @@ func file_daemon_started_service_proto_init() {
+ 		File: protoimpl.DescBuilder{
+ 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
+ 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_daemon_started_service_proto_rawDesc), len(file_daemon_started_service_proto_rawDesc)),
+-			NumEnums:      5,
+-			NumMessages:   104,
++			NumEnums:      6,
++			NumMessages:   106,
+ 			NumExtensions: 0,
+ 			NumServices:   1,
+ 		},
+diff --git a/daemon/started_service.proto b/daemon/started_service.proto
+index 2c27937..d15bb61 100644
+--- a/daemon/started_service.proto
++++ b/daemon/started_service.proto
+@@ -128,6 +128,7 @@ message GroupItem {
+   string type = 2;
+   int64 urlTestTime = 3;
+   int32 urlTestDelay = 4;
++  OutboundIPStack ipStack = 5;
+ }
+ 
+ message URLTestRequest {
+@@ -806,3 +807,19 @@ message NotificationCancel {
+   string identifier = 1;
+   int32 typeID = 2;
+ }
++
++enum IPStackStatus {
++  IP_STACK_UNKNOWN = 0;
++  IP_STACK_AVAILABLE = 1;
++  IP_STACK_UNAVAILABLE = 2;
++}
++
++message IPStackCapabilities {
++  IPStackStatus ipv4 = 1;
++  IPStackStatus ipv6 = 2;
++}
++
++message OutboundIPStack {
++  IPStackCapabilities tcp = 1;
++  IPStackCapabilities udp = 2;
++}
+diff --git a/dns/ip_stack_test.go b/dns/ip_stack_test.go
+new file mode 100644
+index 0000000..3f5f73b
+--- /dev/null
++++ b/dns/ip_stack_test.go
+@@ -0,0 +1,245 @@
++package dns
++
++import (
++	"context"
++	"net/netip"
++	"testing"
++	"time"
++
++	"github.com/sagernet/sing-box/adapter"
++	"github.com/sagernet/sing/common"
++	"github.com/sagernet/sing/common/logger"
++	"github.com/sagernet/sing/contrab/freelru"
++	"github.com/sagernet/sing/contrab/maphash"
++
++	mDNS "github.com/miekg/dns"
++)
++
++func TestDNSAddressAssociation(t *testing.T) {
++	router := &Router{
++		addressMapping: common.Must1(freelru.New[netip.Addr, dnsAddressMapping](16, maphash.NewHasher[netip.Addr]().Hash32, true)),
++	}
++	message := new(mDNS.Msg)
++	message.SetQuestion("www.example.", mDNS.TypeA)
++	message.SetEdns0(1232, true)
++	message.CheckingDisabled = true
++	response := new(mDNS.Msg)
++	response.SetReply(message)
++	response.Answer = []mDNS.RR{
++		&mDNS.CNAME{Hdr: mDNS.RR_Header{Name: "www.example.", Rrtype: mDNS.TypeCNAME, Class: mDNS.ClassINET, Ttl: 60}, Target: "cdn.example."},
++		&mDNS.A{Hdr: mDNS.RR_Header{Name: "cdn.example.", Rrtype: mDNS.TypeA, Class: mDNS.ClassINET, Ttl: 3600}, A: netip.MustParseAddr("192.0.2.1").AsSlice()},
++	}
++	router.recordAddressMapping(message, response, &relatedAddressTransport{}, adapter.DNSQueryOptions{})
++	ip := netip.MustParseAddr("192.0.2.1")
++	mapping, loaded := router.addressMapping.Get(ip)
++	if !loaded || mapping.query.Question[0].Name != "www.example." {
++		t.Fatalf("original DNS question was lost: %+v", mapping)
++	}
++	if !mapping.query.IsEdns0().Do() || !mapping.query.CheckingDisabled || mapping.query.IsEdns0().UDPSize() != 1232 {
++		t.Fatal("DNS query flags were lost")
++	}
++	message.Question[0].Name = "changed.example."
++	message.IsEdns0().SetUDPSize(512)
++	if mapping.query.Question[0].Name != "www.example." || mapping.query.IsEdns0().UDPSize() != 1232 {
++		t.Fatal("DNS association retained a mutable caller query")
++	}
++	if _, loaded := router.LookupReverseMapping(ip); loaded {
++		t.Fatal("internal association enabled public reverse mapping")
++	}
++	router.dnsReverseMapping = common.Must1(freelru.New[netip.Addr, string](16, maphash.NewHasher[netip.Addr]().Hash32, true))
++	router.recordReverseMapping(message, response, nil)
++	if domain, loaded := router.LookupReverseMapping(ip); !loaded || domain != "cdn.example" {
++		t.Fatal("public reverse mapping changed its domain semantics")
++	}
++}
++
++type relatedAddressTransport struct {
++	adapter.DNSTransport
++	queried chan mDNS.Question
++	address netip.Addr
++}
++
++func (*relatedAddressTransport) Type() string { return "test" }
++
++func (*relatedAddressTransport) Tag() string { return "test" }
++
++func (t *relatedAddressTransport) Exchange(_ context.Context, message *mDNS.Msg) (*mDNS.Msg, error) {
++	if t.queried != nil {
++		t.queried <- message.Question[0]
++	}
++	if t.address.IsValid() {
++		return FixedResponse(message.Id, message.Question[0], []netip.Addr{t.address}, 60), nil
++	}
++	return nil, context.DeadlineExceeded
++}
++
++type ipStackDNSCache struct {
++	adapter.DNSCacheStore
++	question mDNS.Question
++	message  []byte
++	expires  time.Time
++}
++
++func (c *ipStackDNSCache) LoadDNSCache(_ string, name string, qType uint16) ([]byte, time.Time, bool) {
++	if name != c.question.Name || qType != c.question.Qtype {
++		return nil, time.Time{}, false
++	}
++	return c.message, c.expires, true
++}
++
++func (c *ipStackDNSCache) SaveDNSCacheAsync(string, string, uint16, []byte, time.Time, logger.Logger) {
++}
++
++func TestRelatedAddressCachePolicy(t *testing.T) {
++	for _, test := range []struct {
++		name       string
++		cache      bool
++		age        time.Duration
++		client     ClientOptions
++		query      adapter.DNSQueryOptions
++		dnssec     bool
++		sourceTTL  uint32
++		cached     bool
++		refresh    bool
++	}{
++		{name: "no cache entry"},
++		{name: "fresh", cache: true, age: -time.Hour, cached: true},
++		{name: "expired", cache: true, age: time.Minute},
++		{name: "optimistic", cache: true, age: time.Minute, client: ClientOptions{OptimisticTimeout: time.Hour}, cached: true, refresh: true},
++		{name: "optimistic expired", cache: true, age: 2 * time.Hour, client: ClientOptions{OptimisticTimeout: time.Hour}},
++		{name: "query disables optimistic", cache: true, age: time.Minute, client: ClientOptions{OptimisticTimeout: time.Hour}, query: adapter.DNSQueryOptions{DisableOptimisticCache: true}},
++		{name: "expiration disabled", cache: true, age: 2 * time.Hour, client: ClientOptions{DisableExpire: true}, cached: true},
++		{name: "cache disabled", cache: true, age: -time.Hour, client: ClientOptions{DisableCache: true}},
++		{name: "query disables cache", cache: true, age: -time.Hour, query: adapter.DNSQueryOptions{DisableCache: true}},
++		{name: "uncacheable query", cache: true, age: -time.Hour, dnssec: true},
++		{name: "source TTL elapsed", sourceTTL: 1},
++	} {
++		t.Run(test.name, func(t *testing.T) {
++			query := new(mDNS.Msg)
++			query.SetQuestion("www.example.", mDNS.TypeA)
++			if test.dnssec {
++				query.SetEdns0(1232, true)
++			}
++			options := test.client
++			options.Context = context.Background()
++			client := NewClient(options)
++			cachedAddress := netip.MustParseAddr("2001:db8::1")
++			liveAddress := netip.MustParseAddr("2001:db8::2")
++			if test.cache {
++				opposite := mDNS.Question{Name: query.Question[0].Name, Qtype: mDNS.TypeAAAA, Qclass: mDNS.ClassINET}
++				response := FixedResponse(query.Id, opposite, []netip.Addr{cachedAddress}, 60)
++				raw, err := response.Pack()
++				if err != nil {
++					t.Fatal(err)
++				}
++				client.dnsCache = &ipStackDNSCache{
++					question: opposite,
++					message:  raw,
++					expires:  time.Now().Add(-test.age),
++				}
++			}
++			transport := &relatedAddressTransport{
++				queried: make(chan mDNS.Question, 1),
++				address: liveAddress,
++			}
++			router := &Router{
++				client:         client,
++				addressMapping: common.Must1(freelru.New[netip.Addr, dnsAddressMapping](16, maphash.NewHasher[netip.Addr]().Hash32, true)),
++			}
++			original := netip.MustParseAddr("192.0.2.1")
++			answer := FixedResponse(query.Id, query.Question[0], []netip.Addr{original}, test.sourceTTL)
++			router.recordAddressMapping(query, answer, transport, test.query)
++			if test.sourceTTL > 0 {
++				time.Sleep(time.Duration(test.sourceTTL)*time.Second + time.Millisecond)
++			}
++			addresses, err := router.LookupRelatedAddresses(context.Background(), original)
++			expected := liveAddress
++			if test.cached {
++				expected = cachedAddress
++			}
++			if err != nil || len(addresses) != 1 || addresses[0] != expected {
++				t.Fatalf("related addresses = %v, %v; want %v", addresses, err, expected)
++			}
++			if !test.cached || test.refresh {
++				select {
++				case question := <-transport.queried:
++					if question.Name != query.Question[0].Name || question.Qtype != mDNS.TypeAAAA {
++						t.Fatal("adaptation re-queried the source family or changed the domain")
++					}
++				case <-time.After(time.Second):
++					t.Fatal("expected the original DNS client to query the other family")
++				}
++			} else {
++				select {
++				case <-transport.queried:
++					t.Fatal("a valid cached answer started an unexpected query")
++				default:
++				}
++			}
++			if _, loaded := router.addressMapping.Get(expected); !loaded {
++				t.Fatal("supplemental answer did not update the association index")
++			}
++			if query.Question[0].Qtype != mDNS.TypeA {
++				t.Fatal("adaptation changed the original query")
++			}
++		})
++	}
++}
++
++type relatedAddressClient struct {
++	adapter.DNSClient
++	exchange func(context.Context, adapter.DNSTransport, *mDNS.Msg, adapter.DNSQueryOptions, func(*mDNS.Msg) bool) (*mDNS.Msg, error)
++}
++
++func (c *relatedAddressClient) Exchange(ctx context.Context, transport adapter.DNSTransport, message *mDNS.Msg, options adapter.DNSQueryOptions, check func(*mDNS.Msg) bool) (*mDNS.Msg, error) {
++	return c.exchange(ctx, transport, message, options, check)
++}
++
++func TestRelatedAddressUsesResolvedQuery(t *testing.T) {
++	transport := &relatedAddressTransport{}
++	ttl := uint32(30)
++	options := adapter.DNSQueryOptions{
++		DisableCache:           true,
++		DisableOptimisticCache: true,
++		RewriteTTL:             &ttl,
++		Timeout:                time.Second,
++		ClientSubnet:           netip.MustParsePrefix("192.0.2.0/24"),
++	}
++	router := &Router{
++		addressMapping: common.Must1(freelru.New[netip.Addr, dnsAddressMapping](16, maphash.NewHasher[netip.Addr]().Hash32, true)),
++	}
++	query := new(mDNS.Msg)
++	query.SetQuestion("www.example.", mDNS.TypeA)
++	query.SetEdns0(1232, false)
++	query.CheckingDisabled = true
++	answer := new(mDNS.Msg)
++	answer.SetReply(query)
++	answer.Answer = []mDNS.RR{
++		&mDNS.A{Hdr: mDNS.RR_Header{Name: "www.example.", Rrtype: mDNS.TypeA, Class: mDNS.ClassINET, Ttl: 30}, A: netip.MustParseAddr("192.0.2.1").AsSlice()},
++	}
++	router.recordAddressMapping(query, answer, transport, options)
++	router.client = &relatedAddressClient{exchange: func(ctx context.Context, actual adapter.DNSTransport, message *mDNS.Msg, actualOptions adapter.DNSQueryOptions, check func(*mDNS.Msg) bool) (*mDNS.Msg, error) {
++		if actual != transport || actualOptions != options || check != nil {
++			t.Fatal("related query did not reuse the resolved DNS exchange")
++		}
++		if message.Question[0].Name != "www.example." || message.Question[0].Qtype != mDNS.TypeAAAA || !message.CheckingDisabled || message.IsEdns0() == nil || message.IsEdns0().Do() {
++			t.Fatal("related query lost the original question or flags")
++		}
++		response := new(mDNS.Msg)
++		response.SetReply(message)
++		response.Answer = []mDNS.RR{
++			&mDNS.AAAA{Hdr: mDNS.RR_Header{Name: "www.example.", Rrtype: mDNS.TypeAAAA, Class: mDNS.ClassINET, Ttl: 30}, AAAA: netip.MustParseAddr("2001:db8::1").AsSlice()},
++		}
++		return response, nil
++	}}
++	addresses, err := router.LookupRelatedAddresses(context.Background(), netip.MustParseAddr("192.0.2.1"))
++	if err != nil || len(addresses) != 1 || addresses[0] != netip.MustParseAddr("2001:db8::1") {
++		t.Fatalf("unexpected related addresses: %v, %v", addresses, err)
++	}
++	if _, loaded := router.addressMapping.Get(addresses[0]); !loaded {
++		t.Fatal("supplemental DNS answer did not create an address association")
++	}
++	if query.Question[0].Qtype != mDNS.TypeA {
++		t.Fatal("supplemental query modified the original question")
++	}
++}
+diff --git a/dns/router.go b/dns/router.go
+index 40107d9..45489ef 100644
+--- a/dns/router.go
++++ b/dns/router.go
+@@ -45,6 +45,7 @@ type Router struct {
+ 	rawRules              []option.DNSRule
+ 	rules                 []adapter.DNSRule
+ 	defaultDomainStrategy C.DomainStrategy
++	addressMapping        *freelru.Cache[netip.Addr, dnsAddressMapping]
+ 	dnsReverseMapping     *freelru.Cache[netip.Addr, string]
+ 	platformInterface     adapter.PlatformInterface
+ 	legacyDNSMode         bool
+@@ -53,6 +54,13 @@ type Router struct {
+ 	closing               bool
+ }
+ 
++type dnsAddressMapping struct {
++	// Response validity belongs to the DNS client, not this query index.
++	query     *mDNS.Msg
++	transport adapter.DNSTransport
++	options   adapter.DNSQueryOptions
++}
++
+ func NewRouter(ctx context.Context, logFactory log.Factory, options option.DNSOptions) (*Router, error) {
+ 	router := &Router{
+ 		ctx:                   ctx,
+@@ -116,6 +124,7 @@ func NewRouter(ctx context.Context, logFactory log.Factory, options option.DNSOp
+ 	if options.ReverseMapping {
+ 		router.dnsReverseMapping = common.Must1(freelru.New[netip.Addr, string](1024, maphash.NewHasher[netip.Addr]().Hash32, true))
+ 	}
++	router.addressMapping = common.Must1(freelru.New[netip.Addr, dnsAddressMapping](max(options.DNSClientOptions.CacheCapacity, 1024), maphash.NewHasher[netip.Addr]().Hash32, true))
+ 	return router, nil
+ }
+ 
+@@ -424,6 +433,7 @@ func (r *Router) logRuleMatch(ctx context.Context, ruleIndex int, currentRule ad
+ type exchangeWithRulesResult struct {
+ 	response     *mDNS.Msg
+ 	transport    adapter.DNSTransport
++	options      adapter.DNSQueryOptions
+ 	rejectAction *R.RuleActionReject
+ 	err          error
+ }
+@@ -437,7 +447,7 @@ type dnsRuleWalkState struct {
+ 	anonymousFuture  *dnsEvaluatedFuture
+ 	namedFutures     map[string]*dnsEvaluatedFuture
+ 	namedResponses   map[string]*mDNS.Msg
+-	namedTransports  map[string]adapter.DNSTransport
++	namedExchanges   map[string]exchangeWithRulesResult
+ 	futures          []*dnsEvaluatedFuture
+ 	armedRules       []*dnsArmedRule
+ 	terminalFuture   *dnsEvaluatedFuture
+@@ -456,6 +466,7 @@ type dnsEvaluatedFuture struct {
+ 	tag       string
+ 	terminal  bool
+ 	transport adapter.DNSTransport
++	options   adapter.DNSQueryOptions
+ 	cancel    context.CancelFunc
+ 	done      chan struct{}
+ 	response  *mDNS.Msg
+@@ -509,11 +520,12 @@ func (r *Router) launchDNSEvaluate(ctx context.Context, state *dnsRuleWalkState,
+ 	future := &dnsEvaluatedFuture{
+ 		tag:       tag,
+ 		transport: transport,
++		options:   r.finalizeExchangeOptions(options),
+ 		cancel:    cancel,
+ 		done:      make(chan struct{}),
+ 	}
+ 	state.futures = append(state.futures, future)
+-	r.client.ExchangeAsync(exchangeCtx, transport, message, r.finalizeExchangeOptions(options), nil, func(response *mDNS.Msg, err error) {
++	r.client.ExchangeAsync(exchangeCtx, transport, message, future.options, nil, func(response *mDNS.Msg, err error) {
+ 		future.response = response
+ 		future.err = err
+ 		close(future.done)
+@@ -541,10 +553,15 @@ func (r *Router) settleDNSFutures(ctx context.Context, message *mDNS.Msg, state
+ 		maps.Copy(newResponses, state.namedResponses)
+ 		newResponses[future.tag] = future.view()
+ 		state.namedResponses = newResponses
+-		newTransports := make(map[string]adapter.DNSTransport, len(state.namedTransports)+1)
+-		maps.Copy(newTransports, state.namedTransports)
+-		newTransports[future.tag] = future.transport
+-		state.namedTransports = newTransports
++		newExchanges := make(map[string]exchangeWithRulesResult, len(state.namedExchanges)+1)
++		maps.Copy(newExchanges, state.namedExchanges)
++		newExchanges[future.tag] = exchangeWithRulesResult{
++			response:  future.view(),
++			transport: future.transport,
++			options:   future.options,
++			err:       future.err,
++		}
++		state.namedExchanges = newExchanges
+ 	}
+ }
+ 
+@@ -688,10 +705,7 @@ func (r *Router) walkDNSRules(ctx context.Context, rules []adapter.DNSRule, mess
+ 						err: E.New(dnsRespondMissingResponseMessage),
+ 					}, nil
+ 				}
+-				return exchangeWithRulesResult{
+-					response:  namedResponse,
+-					transport: state.namedTransports[responseTag],
+-				}, nil
++				return state.namedExchanges[responseTag], nil
+ 			}
+ 			if !hasBindings {
+ 				if future := state.anonymousFuture; future != nil && !future.resolved() {
+@@ -707,6 +721,7 @@ func (r *Router) walkDNSRules(ctx context.Context, rules []adapter.DNSRule, mess
+ 			return exchangeWithRulesResult{
+ 				response:  response,
+ 				transport: state.anonymousFuture.transport,
++				options:   state.anonymousFuture.options,
+ 			}, nil
+ 		case *R.RuleActionDNSRoute:
+ 			queryOptions := state.effectiveOptions
+@@ -841,16 +856,20 @@ func (r *Router) sweepArmedDNSRules(ctx context.Context, message *mDNS.Msg, stat
+ 			var (
+ 				response  *mDNS.Msg
+ 				transport adapter.DNSTransport
++				options   adapter.DNSQueryOptions
+ 			)
+ 			if responseTag := armed.rule.MatchResponseTag(); responseTag != "" {
+ 				response = state.namedResponses[responseTag]
+-				transport = state.namedTransports[responseTag]
++				transport = state.namedExchanges[responseTag].transport
++				options = state.namedExchanges[responseTag].options
+ 			} else if armed.anonymousFuture != nil {
+ 				response = armed.anonymousFuture.view()
+ 				transport = armed.anonymousFuture.transport
++				options = armed.anonymousFuture.options
+ 			} else if state.anonymousFuture != nil {
+ 				response = state.anonymousResponse()
+ 				transport = state.anonymousFuture.transport
++				options = state.anonymousFuture.options
+ 			}
+ 			if response == nil {
+ 				return exchangeWithRulesResult{
+@@ -860,6 +879,7 @@ func (r *Router) sweepArmedDNSRules(ctx context.Context, message *mDNS.Msg, stat
+ 			return exchangeWithRulesResult{
+ 				response:  response,
+ 				transport: transport,
++				options:   options,
+ 			}, nil, true
+ 		case *R.RuleActionDNSRoute:
+ 			queryOptions := armed.options
+@@ -909,13 +929,16 @@ func (r *Router) finishPendingExchange(ctx context.Context, message *mDNS.Msg, s
+ 		return exchangeWithRulesResult{
+ 			response:  pending.future.view(),
+ 			transport: pending.future.transport,
++			options:   pending.future.options,
+ 			err:       pending.future.err,
+ 		}
+ 	}
+-	response, err := r.client.Exchange(adapter.OverrideContext(ctx), pending.transport, message, r.finalizeExchangeOptions(pending.options), nil)
++	options := r.finalizeExchangeOptions(pending.options)
++	response, err := r.client.Exchange(adapter.OverrideContext(ctx), pending.transport, message, options, nil)
+ 	return exchangeWithRulesResult{
+ 		response:  response,
+ 		transport: pending.transport,
++		options:   options,
+ 		err:       err,
+ 	}
+ }
+@@ -931,10 +954,12 @@ func (r *Router) exchangeWithRulesAsync(ctx context.Context, rules []adapter.DNS
+ 	if suspension.pending != nil && suspension.pending.future == nil {
+ 		cancelDNSFutures(state)
+ 		pending := suspension.pending
+-		r.client.ExchangeAsync(adapter.OverrideContext(ctx), pending.transport, message, r.finalizeExchangeOptions(pending.options), nil, func(response *mDNS.Msg, err error) {
++		options := r.finalizeExchangeOptions(pending.options)
++		r.client.ExchangeAsync(adapter.OverrideContext(ctx), pending.transport, message, options, nil, func(response *mDNS.Msg, err error) {
+ 			callback(exchangeWithRulesResult{
+ 				response:  response,
+ 				transport: pending.transport,
++				options:   options,
+ 				err:       err,
+ 			})
+ 		})
+@@ -1118,6 +1143,27 @@ func (r *Router) prepareExchange(ctx context.Context, message *mDNS.Msg) (*dnsEx
+ 	}, nil, nil
+ }
+ 
++func (r *Router) recordAddressMapping(message *mDNS.Msg, response *mDNS.Msg, transport adapter.DNSTransport, options adapter.DNSQueryOptions) {
++	r.recordReverseMapping(message, response, transport)
++	if len(message.Question) > 0 && response != nil && response.Rcode == mDNS.RcodeSuccess && len(response.Answer) > 0 {
++		if transport != nil && transport.Type() != C.DNSTypeFakeIP {
++			mapping := dnsAddressMapping{
++				query:     message.Copy(),
++				transport: transport,
++				options:   options,
++			}
++			for _, answer := range response.Answer {
++				switch record := answer.(type) {
++				case *mDNS.A:
++					r.addressMapping.Add(M.AddrFromIP(record.A), mapping)
++				case *mDNS.AAAA:
++					r.addressMapping.Add(M.AddrFromIP(record.AAAA), mapping)
++				}
++			}
++		}
++	}
++}
++
+ func (r *Router) recordReverseMapping(message *mDNS.Msg, response *mDNS.Msg, transport adapter.DNSTransport) {
+ 	if r.dnsReverseMapping != nil && len(message.Question) > 0 && response != nil && len(response.Answer) > 0 {
+ 		if transport == nil || transport.Type() != C.DNSTypeFakeIP {
+@@ -1133,7 +1179,7 @@ func (r *Router) recordReverseMapping(message *mDNS.Msg, response *mDNS.Msg, tra
+ 	}
+ }
+ 
+-func (r *Router) exchangeLegacy(ctx context.Context, exchangeCtx *dnsExchangeContext, message *mDNS.Msg, options adapter.DNSQueryOptions) (*mDNS.Msg, adapter.DNSTransport, error) {
++func (r *Router) exchangeLegacy(ctx context.Context, exchangeCtx *dnsExchangeContext, message *mDNS.Msg, options adapter.DNSQueryOptions) exchangeWithRulesResult {
+ 	var (
+ 		transport adapter.DNSTransport
+ 		rule      adapter.DNSRule
+@@ -1149,23 +1195,24 @@ func (r *Router) exchangeLegacy(ctx context.Context, exchangeCtx *dnsExchangeCon
+ 			case *R.RuleActionReject:
+ 				switch action.Method {
+ 				case C.RuleActionRejectMethodDefault:
+-					return &mDNS.Msg{
++					return exchangeWithRulesResult{response: &mDNS.Msg{
+ 						MsgHdr: mDNS.MsgHdr{
+ 							Id:       message.Id,
+ 							Rcode:    mDNS.RcodeRefused,
+ 							Response: true,
+ 						},
+ 						Question: []mDNS.Question{message.Question[0]},
+-					}, nil, nil
++					}}
+ 				case C.RuleActionRejectMethodDrop:
+-					return nil, nil, R.ErrDrop
++					return exchangeWithRulesResult{err: R.ErrDrop}
+ 				}
+ 			case *R.RuleActionPredefined:
+-				return action.Response(message), nil, nil
++				return exchangeWithRulesResult{response: action.Response(message)}
+ 			}
+ 		}
+ 		responseCheck := addressLimitResponseCheck(rule, exchangeCtx.metadata)
+-		response, err := r.client.Exchange(dnsCtx, transport, message, r.finalizeExchangeOptions(dnsOptions), responseCheck)
++		dnsOptions = r.finalizeExchangeOptions(dnsOptions)
++		response, err := r.client.Exchange(dnsCtx, transport, message, dnsOptions, responseCheck)
+ 		var rejected bool
+ 		if err != nil {
+ 			if errors.Is(err, ErrResponseRejectedCached) {
+@@ -1183,7 +1230,7 @@ func (r *Router) exchangeLegacy(ctx context.Context, exchangeCtx *dnsExchangeCon
+ 		if responseCheck != nil && rejected {
+ 			continue
+ 		}
+-		return response, transport, err
++		return exchangeWithRulesResult{response: response, transport: transport, options: dnsOptions, err: err}
+ 	}
+ }
+ 
+@@ -1193,24 +1240,21 @@ func (r *Router) Exchange(ctx context.Context, message *mDNS.Msg, options adapte
+ 		return earlyResponse, err
+ 	}
+ 	ctx = exchangeCtx.ctx
+-	var (
+-		response  *mDNS.Msg
+-		transport adapter.DNSTransport
+-	)
++	var result exchangeWithRulesResult
+ 	if options.Transport != nil {
+-		transport = options.Transport
+-		response, err = r.client.Exchange(ctx, transport, message, r.finalizeExchangeOptions(options), nil)
++		result.transport = options.Transport
++		result.options = r.finalizeExchangeOptions(options)
++		result.response, result.err = r.client.Exchange(ctx, result.transport, message, result.options, nil)
+ 	} else if !exchangeCtx.legacyDNSMode {
+-		exchangeResult := r.exchangeWithRules(ctx, exchangeCtx.rules, message, options, true)
+-		response, transport, err = exchangeResult.response, exchangeResult.transport, exchangeResult.err
++		result = r.exchangeWithRules(ctx, exchangeCtx.rules, message, options, true)
+ 	} else {
+-		response, transport, err = r.exchangeLegacy(ctx, exchangeCtx, message, options)
++		result = r.exchangeLegacy(ctx, exchangeCtx, message, options)
+ 	}
+-	if err != nil {
+-		return nil, err
++	if result.err != nil {
++		return nil, result.err
+ 	}
+-	r.recordReverseMapping(message, response, transport)
+-	return response, nil
++	r.recordAddressMapping(message, result.response, result.transport, result.options)
++	return result.response, nil
+ }
+ 
+ func (r *Router) ExchangeAsync(ctx context.Context, message *mDNS.Msg, options adapter.DNSQueryOptions, callback func(response *mDNS.Msg, err error)) {
+@@ -1222,28 +1266,28 @@ func (r *Router) ExchangeAsync(ctx context.Context, message *mDNS.Msg, options a
+ 	ctx = exchangeCtx.ctx
+ 	if options.Transport != nil {
+ 		transport := options.Transport
+-		r.client.ExchangeAsync(ctx, transport, message, r.finalizeExchangeOptions(options), nil, func(response *mDNS.Msg, exchangeErr error) {
+-			r.finishExchangeAsync(message, transport, response, exchangeErr, callback)
++		options = r.finalizeExchangeOptions(options)
++		r.client.ExchangeAsync(ctx, transport, message, options, nil, func(response *mDNS.Msg, exchangeErr error) {
++			r.finishExchangeAsync(message, exchangeWithRulesResult{response: response, transport: transport, options: options, err: exchangeErr}, callback)
+ 		})
+ 	} else if !exchangeCtx.legacyDNSMode {
+ 		r.exchangeWithRulesAsync(ctx, exchangeCtx.rules, message, options, true, func(result exchangeWithRulesResult) {
+-			r.finishExchangeAsync(message, result.transport, result.response, result.err, callback)
++			r.finishExchangeAsync(message, result, callback)
+ 		})
+ 	} else {
+ 		go func() {
+-			response, transport, exchangeErr := r.exchangeLegacy(ctx, exchangeCtx, message, options)
+-			r.finishExchangeAsync(message, transport, response, exchangeErr, callback)
++			r.finishExchangeAsync(message, r.exchangeLegacy(ctx, exchangeCtx, message, options), callback)
+ 		}()
+ 	}
+ }
+ 
+-func (r *Router) finishExchangeAsync(message *mDNS.Msg, transport adapter.DNSTransport, response *mDNS.Msg, err error, callback func(response *mDNS.Msg, err error)) {
+-	if err != nil {
+-		callback(nil, err)
++func (r *Router) finishExchangeAsync(message *mDNS.Msg, result exchangeWithRulesResult, callback func(response *mDNS.Msg, err error)) {
++	if result.err != nil {
++		callback(nil, result.err)
+ 		return
+ 	}
+-	r.recordReverseMapping(message, response, transport)
+-	callback(response, nil)
++	r.recordAddressMapping(message, result.response, result.transport, result.options)
++	callback(result.response, nil)
+ }
+ 
+ func (r *Router) Lookup(ctx context.Context, domain string, options adapter.DNSQueryOptions) ([]netip.Addr, error) {
+@@ -1377,6 +1421,7 @@ func (r *Router) ClearCache() {
+ 		r.platformInterface.ClearDNSCache()
+ 	}
+ 	service.FromContext[adapter.NetworkManager](r.ctx).FlushSystemDNSCache()
++	r.addressMapping.Purge()
+ 	if r.dnsReverseMapping != nil {
+ 		r.dnsReverseMapping.Purge()
+ 	}
+@@ -1390,6 +1435,26 @@ func (r *Router) LookupReverseMapping(ip netip.Addr) (string, bool) {
+ 	return domain, loaded
+ }
+ 
++func (r *Router) LookupRelatedAddresses(ctx context.Context, ip netip.Addr) ([]netip.Addr, error) {
++	mapping, loaded := r.addressMapping.Get(ip)
++	if !loaded {
++		return nil, nil
++	}
++	queryType := uint16(mDNS.TypeA)
++	if ip.Is4() {
++		queryType = mDNS.TypeAAAA
++	}
++	message := mapping.query.Copy()
++	message.Id = mDNS.Id()
++	message.Question[0].Qtype = queryType
++	response, err := r.client.Exchange(ctx, mapping.transport, message, mapping.options, nil)
++	if err != nil {
++		return nil, err
++	}
++	r.recordAddressMapping(message, response, mapping.transport, mapping.options)
++	return adapter.DNSResponseAddresses(response), nil
++}
++
+ func (r *Router) ResetNetwork() {
+ 	for _, transport := range r.transport.Transports() {
+ 		transport.Reset()
+diff --git a/docs/configuration/outbound/urltest.md b/docs/configuration/outbound/urltest.md
+index f4b3b0a..0b6d485 100644
+--- a/docs/configuration/outbound/urltest.md
++++ b/docs/configuration/outbound/urltest.md
+@@ -28,7 +28,44 @@ List of outbound tags to test.
+ 
+ #### url
+ 
+-The URL to test. `https://www.gstatic.com/generate_204` will be used if empty.
++The URL to test. `https://cp.cloudflare.com/generate_204` will be used if empty.
++
++When the URL hostname resolves to both IPv4 and IPv6, the test also records
++each address family's TCP and UDP availability for the actual outbound.
++TCP uses HTTP; UDP uses HTTP/3 and requires `with_quic`. The displayed delay
++is the minimum successful measurement. A single-stack URL leaves both
++families unknown and retains the ordinary TCP delay test.
++
++TCP and UDP use the same rule: a successful probe is available and a failed
++probe is unavailable. The configured URL must support the tested protocols.
++Unknown means a probe was not performed or the build cannot perform it, not
++that an HTTP/3 failure lacks confirmation from another probe. UDP requires an
++HTTPS URL and does not fall back to TCP.
++The probes run concurrently within the normal test timeout. An API request's
++shorter deadline still applies. Same-host alternative UDP ports advertised by
++`Alt-Svc` are used without changing the HTTP origin or TLS server name.
++
++For RealIP connections, the destination family is adapted only
++when the selected outbound has a known available alternative. Address
++association uses observed DNS answers, never sniffed SNI. The association index
++stores query context, not another DNS response cache, and does not require the
++original address to remain cached.
++The other family is queried through the original DNS transport with the resolved
++query options. The original DNS client uses its normal cache, optimistic refresh
++and expiration policy; a cache miss or disabled caching causes a live query.
++Adaptation does not repeat DNS rule evaluation or server selection;
++supplemental answers update the same DNS association cache. Direct and
++FakeIP connections retain their existing behavior. Missing query associations
++leave the original destination unchanged. The public `reverse_mapping`
++option retains its original behavior independently of adaptation.
++
++The Android and yacd integrations show one dot per address family: green when
++both TCP and UDP are available, red when neither is available, and yellow when
++only one is available. A family with an unknown result has no dot.
++Without `with_quic`, UDP is not probed and the dots reflect TCP availability alone.
++The UDP capability itself remains unknown.
++
++Connection details and outbound logs use the adapted destination.
+ 
+ #### interval
+ 
+diff --git a/docs/configuration/outbound/urltest.zh.md b/docs/configuration/outbound/urltest.zh.md
+index 4372298..43adb19 100644
+--- a/docs/configuration/outbound/urltest.zh.md
++++ b/docs/configuration/outbound/urltest.zh.md
+@@ -28,7 +28,31 @@
+ 
+ #### url
+ 
+-用于测试的链接。默认使用 `https://www.gstatic.com/generate_204`。
++用于测试的链接。默认使用 `https://cp.cloudflare.com/generate_204`。
++
++链接域名同时具有 IPv4 和 IPv6 地址时，测试还会记录实际出站的 TCP、UDP 双栈可用性。
++TCP 使用 HTTP，UDP 使用 HTTP/3，后者需要 `with_quic`。显示的延迟取成功测量中的最小值。
++单栈链接的能力状态保持 unknown，仍执行原有的 TCP 延迟测试。
++
++TCP、UDP 使用相同的判定：探测成功为可用，失败为不可用。配置的 URL 应支持所测协议。
++unknown 仅表示没有执行或构建无法执行探测，不用于区别对待未经其它探测确认的 HTTP/3 失败。
++UDP 探测需要 HTTPS URL，不会回退到 TCP。
++探测在原有超时内并发进行，API 请求指定的更短超时仍然有效。
++`Alt-Svc` 声明的同主机替代 UDP 端口会用于探测，但不会更改 HTTP 来源或 TLS 服务器名。
++
++RealIP 连接仅在原地址族明确不可用、另一地址族明确可用时适配目标地址。
++地址关联来自实际 DNS 回答，不使用 sniff 或 SNI。关联索引只保留查询上下文，不另建 DNS 回答缓存，
++也不要求原地址仍在缓存中。补查沿用原 DNS 传输及已确定的查询选项，缓存命中、乐观刷新和过期策略
++均由原 DNS 客户端处理；缓存未命中或禁用缓存时自然发起实际查询。
++适配不再执行 DNS 规则求值或服务器选择；补查回答也更新同一关联索引。
++直连、FakeIP，以及没有 DNS 查询关联的连接保持原有行为。
++公开的 `reverse_mapping` 选项独立保留原有行为。
++
++Android、yacd 分别用一个圆点表示 IPv4、IPv6：TCP、UDP 都通为绿色，都不通为红色，
++只有一个通为黄色；任一探测结果未知时不显示该地址族的圆点。
++未构建 `with_quic` 时不探测 UDP，圆点仅依据 TCP 的可用性显示；UDP 能力本身仍为 unknown。
++
++连接详情和出站日志记录适配后的目标。
+ 
+ #### interval
+ 
+@@ -46,4 +70,4 @@
+ 
+ 当选定的出站发生更改时，中断现有连接。
+ 
+-仅入站连接受此设置影响，内部连接将始终被中断。
+\ No newline at end of file
++仅入站连接受此设置影响，内部连接将始终被中断。
+diff --git a/experimental/clashapi/proxies.go b/experimental/clashapi/proxies.go
+index fd8a6e2..dc395a5 100644
+--- a/experimental/clashapi/proxies.go
++++ b/experimental/clashapi/proxies.go
+@@ -70,6 +70,10 @@ func proxyInfo(server *Server, detour adapter.Outbound) *badjson.JSONObject {
+ 	info.Put("type", clashType)
+ 	info.Put("name", detour.Tag())
+ 	info.Put("udp", common.Contains(detour.Network(), N.NetworkUDP))
++	if capabilities, loaded := server.urlTestHistory.LoadOutboundIPStack(detour); loaded {
++		info.Put("ip-stack", capabilities)
++		info.Put("udp-probe", C.WithQUIC)
++	}
+ 	delayHistory := server.urlTestHistory.LoadURLTestHistory(group.RealTag(detour, N.NetworkTCP))
+ 	if delayHistory != nil {
+ 		info.Put("history", []*adapter.URLTestHistory{delayHistory})
+@@ -227,12 +231,15 @@ func getProxyDelay(server *Server) func(w http.ResponseWriter, r *http.Request)
+ 		}
+ 
+ 		proxy := r.Context().Value(CtxKeyProxy).(adapter.Outbound)
+-		ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond*time.Duration(timeout))
++		ctx, cancel := context.WithTimeout(r.Context(), time.Millisecond*time.Duration(timeout))
+ 		defer cancel()
+ 
+ 		delay, err := urltest.URLTest(ctx, url, proxy)
+ 		defer func() {
+ 			realTag := group.RealTag(proxy, N.NetworkTCP)
++			if realTag == "" {
++				realTag = group.RealTag(proxy, N.NetworkUDP)
++			}
+ 			if err != nil {
+ 				server.urlTestHistory.DeleteURLTestHistory(realTag)
+ 			} else {
+@@ -253,7 +260,7 @@ func getProxyDelay(server *Server) func(w http.ResponseWriter, r *http.Request)
+ 			}
+ 		}()
+ 
+-		if ctx.Err() != nil {
++		if err != nil && ctx.Err() != nil {
+ 			render.Status(r, http.StatusGatewayTimeout)
+ 			render.JSON(w, r, ErrRequestTimeout)
+ 			return
+diff --git a/experimental/clashapi/server.go b/experimental/clashapi/server.go
+index a8c99af..0d75e0d 100644
+--- a/experimental/clashapi/server.go
++++ b/experimental/clashapi/server.go
+@@ -83,8 +83,11 @@ func NewServer(ctx context.Context, logFactory log.ObservableFactory, options op
+ 		endpoint:  service.FromContext[adapter.EndpointManager](ctx),
+ 		logger:    logFactory.NewLogger("clash-api"),
+ 		httpServer: &http.Server{
+-			Addr:    options.ExternalController,
+-			Handler: chiRouter,
++			Addr:        options.ExternalController,
++			Handler:     chiRouter,
++			BaseContext: func(listener net.Listener) context.Context {
++				return ctx
++			},
+ 		},
+ 		trafficManager:           trafficManager,
+ 		urlTestHistory:           urlTestHistory,
+diff --git a/experimental/libbox/command_types.go b/experimental/libbox/command_types.go
+index 5be81a2..99f0e35 100644
+--- a/experimental/libbox/command_types.go
++++ b/experimental/libbox/command_types.go
+@@ -7,6 +7,7 @@ import (
+ 	"sync"
+ 	"time"
+ 
++	C "github.com/sagernet/sing-box/constant"
+ 	"github.com/sagernet/sing-box/daemon"
+ 	M "github.com/sagernet/sing/common/metadata"
+ )
+@@ -66,8 +67,19 @@ type OutboundGroupItem struct {
+ 	Type         string
+ 	URLTestTime  int64
+ 	URLTestDelay int32
++	TCPIPv4      int32
++	TCPIPv6      int32
++	UDPIPv4      int32
++	UDPIPv6      int32
+ }
+ 
++const (
++	IPStackUnknown     = int32(daemon.IPStackStatus_IP_STACK_UNKNOWN)
++	IPStackAvailable   = int32(daemon.IPStackStatus_IP_STACK_AVAILABLE)
++	IPStackUnavailable = int32(daemon.IPStackStatus_IP_STACK_UNAVAILABLE)
++	IPStackUDPProbe    = C.WithQUIC
++)
++
+ type OutboundGroupItemIterator interface {
+ 	Next() *OutboundGroupItem
+ 	HasNext() bool
+@@ -344,12 +356,7 @@ func outboundGroupIteratorFromGRPC(groups *daemon.Groups) OutboundGroupIterator
+ 			IsExpand:   g.IsExpand,
+ 		}
+ 		for _, item := range g.Items {
+-			libboxGroup.itemList = append(libboxGroup.itemList, &OutboundGroupItem{
+-				Tag:          item.Tag,
+-				Type:         item.Type,
+-				URLTestTime:  item.UrlTestTime,
+-				URLTestDelay: item.UrlTestDelay,
+-			})
++			libboxGroup.itemList = append(libboxGroup.itemList, outboundGroupItemFromGRPC(item))
+ 		}
+ 		libboxGroups = append(libboxGroups, libboxGroup)
+ 	}
+@@ -362,16 +369,24 @@ func outboundGroupItemListFromGRPC(list *daemon.OutboundList) OutboundGroupItemI
+ 	}
+ 	var items []*OutboundGroupItem
+ 	for _, ob := range list.Outbounds {
+-		items = append(items, &OutboundGroupItem{
+-			Tag:          ob.Tag,
+-			Type:         ob.Type,
+-			URLTestTime:  ob.UrlTestTime,
+-			URLTestDelay: ob.UrlTestDelay,
+-		})
++		items = append(items, outboundGroupItemFromGRPC(ob))
+ 	}
+ 	return newIterator(items)
+ }
+ 
++func outboundGroupItemFromGRPC(item *daemon.GroupItem) *OutboundGroupItem {
++	return &OutboundGroupItem{
++		Tag:          item.Tag,
++		Type:         item.Type,
++		URLTestTime:  item.UrlTestTime,
++		URLTestDelay: item.UrlTestDelay,
++		TCPIPv4:      int32(item.GetIpStack().GetTcp().GetIpv4()),
++		TCPIPv6:      int32(item.GetIpStack().GetTcp().GetIpv6()),
++		UDPIPv4:      int32(item.GetIpStack().GetUdp().GetIpv4()),
++		UDPIPv6:      int32(item.GetIpStack().GetUdp().GetIpv6()),
++	}
++}
++
+ func connectionFromGRPC(conn *daemon.Connection) Connection {
+ 	var processInfo *ProcessInfo
+ 	if conn.ProcessInfo != nil {
+diff --git a/protocol/group/urltest.go b/protocol/group/urltest.go
+index 46049d2..91e701d 100644
+--- a/protocol/group/urltest.go
++++ b/protocol/group/urltest.go
+@@ -313,14 +313,14 @@ func (g *URLTestGroup) Select(network string) (adapter.Outbound, bool) {
+ 	switch network {
+ 	case N.NetworkTCP:
+ 		if g.selectedOutboundTCP != nil {
+-			if history := g.history.LoadURLTestHistory(RealTag(g.selectedOutboundTCP, N.NetworkTCP)); history != nil {
++			if history := g.networkHistory(g.selectedOutboundTCP, N.NetworkTCP); history != nil {
+ 				minOutbound = g.selectedOutboundTCP
+ 				minDelay = history.Delay
+ 			}
+ 		}
+ 	case N.NetworkUDP:
+ 		if g.selectedOutboundUDP != nil {
+-			if history := g.history.LoadURLTestHistory(RealTag(g.selectedOutboundUDP, N.NetworkUDP)); history != nil {
++			if history := g.networkHistory(g.selectedOutboundUDP, N.NetworkUDP); history != nil {
+ 				minOutbound = g.selectedOutboundUDP
+ 				minDelay = history.Delay
+ 			}
+@@ -330,7 +330,7 @@ func (g *URLTestGroup) Select(network string) (adapter.Outbound, bool) {
+ 		if !common.Contains(detour.Network(), network) {
+ 			continue
+ 		}
+-		history := g.history.LoadURLTestHistory(RealTag(detour, network))
++		history := g.networkHistory(detour, network)
+ 		if history == nil {
+ 			continue
+ 		}
+@@ -351,6 +351,17 @@ func (g *URLTestGroup) Select(network string) (adapter.Outbound, bool) {
+ 	return minOutbound, true
+ }
+ 
++func (g *URLTestGroup) networkHistory(outbound adapter.Outbound, network string) *adapter.URLTestHistory {
++	tag := RealTag(outbound, network)
++	if capabilities, loaded := g.history.LoadIPStack(tag); loaded {
++		value := capabilities.Network(network)
++		if value.IPv4 == adapter.IPStackUnavailable && value.IPv6 == adapter.IPStackUnavailable {
++			return nil
++		}
++	}
++	return g.history.LoadURLTestHistory(tag)
++}
++
+ func (g *URLTestGroup) loopCheck(ticker *time.Ticker, closeChan <-chan struct{}) {
+ 	if time.Since(g.lastActive.Load()) > g.interval {
+ 		g.lastActive.Store(time.Now())
+@@ -395,11 +406,6 @@ func (g *URLTestGroup) urlTest(ctx context.Context, force bool) (map[string]uint
+ 	return result, nil
+ }
+ 
+-type urlTestResult struct {
+-	delay uint16
+-	err   error
+-}
+-
+ type urlTestBatch struct {
+ 	ctx      context.Context
+ 	outbound adapter.OutboundManager
+@@ -465,33 +471,21 @@ func (b *urlTestBatch) test(outbounds []adapter.Outbound, link string, interval
+ 			}
+ 			b.checked[tag] = true
+ 			b.batch.Go(tag, func() (any, error) {
+-				testCtx, cancel := context.WithTimeout(b.ctx, C.TCPTimeout)
+-				defer cancel()
+-				testChan := make(chan urlTestResult, 1)
+-				go func() {
+-					delay, testErr := urltest.URLTest(testCtx, link, detour)
+-					testChan <- urlTestResult{delay, testErr}
+-				}()
+-				var testResult urlTestResult
+-				select {
+-				case testResult = <-testChan:
+-				case <-testCtx.Done():
+-					testResult.err = testCtx.Err()
+-				}
+-				if testResult.err != nil {
++				delay, testErr := urltest.URLTest(b.ctx, link, detour)
++				if testErr != nil {
+ 					if b.ctx.Err() != nil {
+ 						return nil, nil
+ 					}
+-					b.logger.Debug("outbound ", tag, " unavailable: ", testResult.err)
++					b.logger.Debug("outbound ", tag, " unavailable: ", testErr)
+ 					b.history.DeleteURLTestHistory(tag)
+ 				} else {
+-					b.logger.Debug("outbound ", tag, " available: ", testResult.delay, "ms")
++					b.logger.Debug("outbound ", tag, " available: ", delay, "ms")
+ 					b.history.StoreURLTestHistory(tag, &adapter.URLTestHistory{
+ 						Time:  time.Now(),
+-						Delay: testResult.delay,
++						Delay: delay,
+ 					})
+ 					b.access.Lock()
+-					b.result[tag] = testResult.delay
++					b.result[tag] = delay
+ 					b.access.Unlock()
+ 				}
+ 				return nil, nil
+diff --git a/route/ip_stack.go b/route/ip_stack.go
+new file mode 100644
+index 0000000..f2fc3e2
+--- /dev/null
++++ b/route/ip_stack.go
+@@ -0,0 +1,46 @@
++package route
++
++import (
++	"context"
++
++	"github.com/sagernet/sing-box/adapter"
++	C "github.com/sagernet/sing-box/constant"
++	M "github.com/sagernet/sing/common/metadata"
++)
++
++func (r *Router) needsIPStackAdaptation(metadata *adapter.InboundContext, outbound adapter.Outbound) bool {
++	if !metadata.Destination.IsIP() || metadata.FakeIP || outbound.Type() == C.TypeDirect {
++		return false
++	}
++	capabilities, loaded := r.urlTestHistory.LoadIPStack(outbound.Tag())
++	return loaded && capabilities.Network(metadata.Network).NeedsAdaptation(metadata.Destination.Addr)
++}
++
++func (r *Router) adaptIPStack(ctx context.Context, metadata *adapter.InboundContext, outbound adapter.Outbound) {
++	if !r.needsIPStackAdaptation(metadata, outbound) {
++		return
++	}
++	addresses, err := r.dns.LookupRelatedAddresses(adapter.WithContext(ctx, metadata), metadata.Destination.Addr)
++	if err != nil {
++		r.logger.DebugContext(ctx, "lookup related address: ", err)
++		return
++	}
++	for _, address := range addresses {
++		address = address.Unmap()
++		if address.Is4() == metadata.Destination.IsIPv4() {
++			continue
++		}
++		if !metadata.RouteOriginalDestination.IsValid() {
++			metadata.RouteOriginalDestination = metadata.Destination
++		}
++		metadata.Destination = M.SocksaddrFrom(address, metadata.Destination.Port)
++		metadata.DestinationAddresses = nil
++		if address.Is4() {
++			metadata.IPVersion = 4
++		} else {
++			metadata.IPVersion = 6
++		}
++		r.logger.DebugContext(ctx, "using related ", metadata.Network, " destination ", metadata.Destination)
++		return
++	}
++}
+diff --git a/route/ip_stack_test.go b/route/ip_stack_test.go
+new file mode 100644
+index 0000000..7e3519c
+--- /dev/null
++++ b/route/ip_stack_test.go
+@@ -0,0 +1,91 @@
++package route
++
++import (
++	"context"
++	"net/netip"
++	"testing"
++
++	"github.com/sagernet/sing-box/adapter"
++	"github.com/sagernet/sing-box/common/urltest"
++	C "github.com/sagernet/sing-box/constant"
++	"github.com/sagernet/sing-box/log"
++	M "github.com/sagernet/sing/common/metadata"
++	N "github.com/sagernet/sing/common/network"
++)
++
++type ipStackTestDNS struct {
++	adapter.DNSRouter
++	queried   netip.Addr
++	addresses []netip.Addr
++}
++
++func (d *ipStackTestDNS) LookupRelatedAddresses(ctx context.Context, ip netip.Addr) ([]netip.Addr, error) {
++	d.queried = ip
++	return d.addresses, nil
++}
++
++type ipStackTestOutbound struct {
++	adapter.Outbound
++	outboundType string
++}
++
++func (o ipStackTestOutbound) Tag() string { return "node" }
++
++func (o ipStackTestOutbound) Type() string { return o.outboundType }
++
++func TestAdaptIPStack(t *testing.T) {
++	for _, network := range []string{N.NetworkTCP, N.NetworkUDP} {
++		t.Run(network, func(t *testing.T) {
++			history := urltest.NewHistoryStorage()
++			history.StoreIPStack("node", network, adapter.IPStackCapabilities{
++				IPv4: adapter.IPStackUnavailable,
++				IPv6: adapter.IPStackAvailable,
++			})
++			dns := &ipStackTestDNS{addresses: []netip.Addr{netip.MustParseAddr("2001:db8::1")}}
++			router := &Router{dns: dns, urlTestHistory: history, logger: log.NewNOPFactory().NewLogger("router")}
++			original := M.ParseSocksaddr("192.0.2.1:443")
++			metadata := adapter.InboundContext{Network: network, Destination: original, Domain: "unrelated.sniff.example"}
++			router.adaptIPStack(context.Background(), &metadata, ipStackTestOutbound{outboundType: C.TypeVLESS})
++			if metadata.Destination != M.ParseSocksaddr("[2001:db8::1]:443") || metadata.IPVersion != 6 {
++				t.Fatalf("unexpected dial destination: %+v", metadata.Destination)
++			}
++			if metadata.RouteOriginalDestination != original || dns.queried != original.Addr {
++				t.Fatal("DNS association or original packet destination was lost")
++			}
++			overridden := M.ParseSocksaddr("198.51.100.1:80")
++			metadata.Destination = original
++			metadata.RouteOriginalDestination = overridden
++			router.adaptIPStack(context.Background(), &metadata, ipStackTestOutbound{outboundType: C.TypeVLESS})
++			if metadata.RouteOriginalDestination != overridden {
++				t.Fatal("an existing destination override was replaced")
++			}
++		})
++	}
++}
++
++func TestIPStackAdaptationPreservesUnmatchedConnections(t *testing.T) {
++	for _, test := range []struct {
++		name         string
++		outboundType string
++		fakeIP       bool
++		capabilities adapter.IPStackCapabilities
++	}{
++		{"unknown", C.TypeVLESS, false, adapter.IPStackCapabilities{}},
++		{"matching", C.TypeVLESS, false, adapter.IPStackCapabilities{IPv4: adapter.IPStackAvailable, IPv6: adapter.IPStackAvailable}},
++		{"direct", C.TypeDirect, false, adapter.IPStackCapabilities{IPv4: adapter.IPStackUnavailable, IPv6: adapter.IPStackAvailable}},
++		{"fakeip", C.TypeVLESS, true, adapter.IPStackCapabilities{IPv4: adapter.IPStackUnavailable, IPv6: adapter.IPStackAvailable}},
++	} {
++		t.Run(test.name, func(t *testing.T) {
++			history := urltest.NewHistoryStorage()
++			history.StoreIPStack("node", N.NetworkTCP, test.capabilities)
++			dns := &ipStackTestDNS{}
++			router := &Router{dns: dns, urlTestHistory: history, logger: log.NewNOPFactory().NewLogger("router")}
++			original := M.ParseSocksaddr("192.0.2.1:443")
++			metadata := adapter.InboundContext{Network: N.NetworkTCP, Destination: original, FakeIP: test.fakeIP}
++			router.adaptIPStack(context.Background(), &metadata, ipStackTestOutbound{outboundType: test.outboundType})
++			if metadata.Destination != original || dns.queried.IsValid() {
++				t.Fatal("an unmatched connection was modified")
++			}
++		})
++	}
++}
+diff --git a/route/route.go b/route/route.go
+index bf25bae..14adab4 100644
+--- a/route/route.go
++++ b/route/route.go
+@@ -161,6 +161,7 @@ func (r *Router) routeConnection(ctx context.Context, conn net.Conn, metadata ad
+ 	}
+ 	metadata.RouteOutbound = selectedOutbound.Tag()
+ 	metadata.OutboundChain = chain
++	r.adaptIPStack(ctx, &metadata, chain[len(chain)-1])
+ 	for _, tracker := range r.trackers {
+ 		conn = tracker.RoutedConnection(ctx, conn, metadata, selectedRule, selectedOutbound)
+ 	}
+@@ -327,6 +328,7 @@ func (r *Router) routePacketConnection(ctx context.Context, conn N.PacketConn, m
+ 	}
+ 	metadata.RouteOutbound = selectedOutbound.Tag()
+ 	metadata.OutboundChain = chain
++	r.adaptIPStack(ctx, &metadata, chain[len(chain)-1])
+ 	for _, tracker := range r.trackers {
+ 		conn = tracker.RoutedPacketConnection(ctx, conn, metadata, selectedRule, selectedOutbound)
+ 	}
+@@ -496,6 +498,9 @@ func (r *Router) preMatchFlow(ctx context.Context, metadata *adapter.InboundCont
+ 		return continueResult
+ 	}
+ 	outbound = chain[len(chain)-1]
++	if r.needsIPStackAdaptation(metadata, outbound) {
++		return continueResult
++	}
+ 	flowOutbound, isFlowOutbound := outbound.(adapter.FlowOutbound)
+ 	if !isFlowOutbound {
+ 		return continueResult
+diff --git a/route/router.go b/route/router.go
+index 0673dde..3f2554a 100644
+--- a/route/router.go
++++ b/route/router.go
+@@ -9,6 +9,7 @@ import (
+ 	"github.com/sagernet/sing-box/adapter"
+ 	"github.com/sagernet/sing-box/common/process"
+ 	"github.com/sagernet/sing-box/common/taskmonitor"
++	"github.com/sagernet/sing-box/common/urltest"
+ 	C "github.com/sagernet/sing-box/constant"
+ 	"github.com/sagernet/sing-box/log"
+ 	"github.com/sagernet/sing-box/option"
+@@ -32,6 +33,7 @@ type Router struct {
+ 	dns               adapter.DNSRouter
+ 	dnsTransport      adapter.DNSTransportManager
+ 	connection        adapter.ConnectionManager
++	urlTestHistory    *urltest.HistoryStorage
+ 	network           adapter.NetworkManager
+ 	httpClientManager adapter.HTTPClientManager
+ 	rules             []adapter.Rule
+@@ -58,6 +60,7 @@ func NewRouter(ctx context.Context, logFactory log.Factory, options option.Route
+ 		dns:               service.FromContext[adapter.DNSRouter](ctx),
+ 		dnsTransport:      service.FromContext[adapter.DNSTransportManager](ctx),
+ 		connection:        service.FromContext[adapter.ConnectionManager](ctx),
++		urlTestHistory:    service.PtrFromContext[urltest.HistoryStorage](ctx),
+ 		network:           service.FromContext[adapter.NetworkManager](ctx),
+ 		httpClientManager: service.FromContext[adapter.HTTPClientManager](ctx),
+ 		rules:             make([]adapter.Rule, 0, len(options.Rules)),
+-- 
+2.56.0
+

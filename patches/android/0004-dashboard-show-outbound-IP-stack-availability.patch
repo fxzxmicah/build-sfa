@@ -1,0 +1,117 @@
+From 9b57b23f7129ad57471581cced3e9e120d74be3e Mon Sep 17 00:00:00 2001
+From: Fxzx micah <48860358+fxzxmicah@users.noreply.github.com>
+Date: Fri, 27 Nov 2026 00:00:02 +0800
+Subject: [PATCH] dashboard: show outbound IP stack availability
+
+---
+ .../nekohasekai/sfa/compose/model/Groups.kt   | 26 +++++++++++++
+ .../compose/screen/dashboard/GroupsCard.kt    | 39 ++++++++++++++-----
+ 2 files changed, 55 insertions(+), 10 deletions(-)
+
+diff --git a/app/src/main/java/io/nekohasekai/sfa/compose/model/Groups.kt b/app/src/main/java/io/nekohasekai/sfa/compose/model/Groups.kt
+index c869065..48e1233 100644
+--- a/app/src/main/java/io/nekohasekai/sfa/compose/model/Groups.kt
++++ b/app/src/main/java/io/nekohasekai/sfa/compose/model/Groups.kt
+@@ -34,6 +34,8 @@ data class GroupItem(
+     val displayType: String,
+     val urlTestTime: Long,
+     val urlTestDelay: Int,
++    val ipv4: IPStackStatus,
++    val ipv6: IPStackStatus,
+ ) {
+     constructor(item: OutboundGroupItem) : this(
+         item.tag,
+@@ -41,9 +43,33 @@ data class GroupItem(
+         Libbox.proxyDisplayType(item.type),
+         item.urlTestTime,
+         item.urlTestDelay,
++        IPStackStatus.from(item.getTCPIPv4(), item.getUDPIPv4()),
++        IPStackStatus.from(item.getTCPIPv6(), item.getUDPIPv6()),
+     )
+ }
+ 
++enum class IPStackStatus {
++    Unknown,
++    Available,
++    Partial,
++    Unavailable,
++    ;
++
++    companion object {
++        fun from(tcp: Int, udp: Int): IPStackStatus = when {
++            !Libbox.IPStackUDPProbe -> when (tcp) {
++                Libbox.IPStackAvailable.toInt() -> Available
++                Libbox.IPStackUnavailable.toInt() -> Unavailable
++                else -> Unknown
++            }
++            tcp == Libbox.IPStackUnknown.toInt() || udp == Libbox.IPStackUnknown.toInt() -> Unknown
++            tcp == Libbox.IPStackAvailable.toInt() && udp == Libbox.IPStackAvailable.toInt() -> Available
++            tcp == Libbox.IPStackUnavailable.toInt() && udp == Libbox.IPStackUnavailable.toInt() -> Unavailable
++            else -> Partial
++        }
++    }
++}
++
+ internal fun OutboundGroupItemIterator.toList(): List<OutboundGroupItem> {
+     val list = mutableListOf<OutboundGroupItem>()
+     while (hasNext()) {
+diff --git a/app/src/main/java/io/nekohasekai/sfa/compose/screen/dashboard/GroupsCard.kt b/app/src/main/java/io/nekohasekai/sfa/compose/screen/dashboard/GroupsCard.kt
+index 02377a3..dc345c4 100644
+--- a/app/src/main/java/io/nekohasekai/sfa/compose/screen/dashboard/GroupsCard.kt
++++ b/app/src/main/java/io/nekohasekai/sfa/compose/screen/dashboard/GroupsCard.kt
+@@ -73,6 +73,7 @@ import io.nekohasekai.sfa.compat.rememberOverscrollEffectCompat
+ import io.nekohasekai.sfa.compose.component.SnackbarHost
+ import io.nekohasekai.sfa.compose.model.Group
+ import io.nekohasekai.sfa.compose.model.GroupItem
++import io.nekohasekai.sfa.compose.model.IPStackStatus
+ import io.nekohasekai.sfa.compose.screen.dashboard.groups.GroupsUiState
+ import io.nekohasekai.sfa.compose.screen.dashboard.groups.GroupsViewModel
+ import io.nekohasekai.sfa.compose.theme.LocalStatusColors
+@@ -595,16 +596,34 @@ private fun ProxyChip(
+                     horizontalArrangement = Arrangement.SpaceBetween,
+                     verticalAlignment = Alignment.CenterVertically,
+                 ) {
+-                    Text(
+-                        text = item.displayType,
+-                        style = MaterialTheme.typography.labelSmall,
+-                        color =
+-                        if (isSelected) {
+-                            MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+-                        } else {
+-                            MaterialTheme.colorScheme.onSurfaceVariant
+-                        },
+-                    )
++                    Row(
++                        horizontalArrangement = Arrangement.spacedBy(4.dp),
++                        verticalAlignment = Alignment.CenterVertically,
++                    ) {
++                        Text(
++                            text = item.displayType,
++                            style = MaterialTheme.typography.labelSmall,
++                            color =
++                            if (isSelected) {
++                                MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
++                            } else {
++                                MaterialTheme.colorScheme.onSurfaceVariant
++                            },
++                        )
++                        listOf(item.ipv4, item.ipv6).forEach { status ->
++                            val color = when (status) {
++                                IPStackStatus.Available -> Color(0xFF67C23A)
++                                IPStackStatus.Partial -> Color(0xFFD4B75C)
++                                IPStackStatus.Unavailable -> Color(0xFFF56C6C)
++                                IPStackStatus.Unknown -> null
++                            }
++                            if (color != null) {
++                                Canvas(Modifier.size(6.dp)) {
++                                    drawCircle(color)
++                                }
++                            }
++                        }
++                    }
+                     if (item.urlTestDelay > 0) {
+                         Text(
+                             text = "${item.urlTestDelay}ms",
+-- 
+2.56.0
+
