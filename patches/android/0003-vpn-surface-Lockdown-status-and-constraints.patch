@@ -1,4 +1,4 @@
-From d2edb985a8760e78d81d1deda788c00a91abd9bd Mon Sep 17 00:00:00 2001
+From 341c18572d5d9c7ced1c0172c8279360c4a4040d Mon Sep 17 00:00:00 2001
 From: Fxzx micah <48860358+fxzxmicah@users.noreply.github.com>
 Date: Thu, 12 Nov 2026 23:30:47 +0800
 Subject: [PATCH] vpn: surface Lockdown status and constraints

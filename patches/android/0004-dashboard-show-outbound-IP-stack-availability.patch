@@ -1,4 +1,4 @@
-From 0ccddc75812c87067b90f517a928d85f7bc81383 Mon Sep 17 00:00:00 2001
+From c6f549430cd85cef6af98534df2c692445704c23 Mon Sep 17 00:00:00 2001
 From: Fxzx micah <48860358+fxzxmicah@users.noreply.github.com>
 Date: Fri, 27 Nov 2026 00:00:02 +0800
 Subject: [PATCH] dashboard: show outbound IP stack availability

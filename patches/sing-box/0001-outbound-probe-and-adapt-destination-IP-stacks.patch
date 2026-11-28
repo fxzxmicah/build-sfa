@@ -1,4 +1,4 @@
-From dd4ad309c9d4c0f9071b1c1ca6b3b88467711646 Mon Sep 17 00:00:00 2001
+From 1c8f3e7a1eb604e2e9396e8382e9c4b5591ec150 Mon Sep 17 00:00:00 2001
 From: Fxzx micah <48860358+fxzxmicah@users.noreply.github.com>
 Date: Fri, 27 Nov 2026 00:00:02 +0800
 Subject: [PATCH] outbound: probe and adapt destination IP stacks

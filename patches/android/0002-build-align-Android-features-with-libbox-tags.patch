@@ -1,4 +1,4 @@
-From 49d4626343174fe98d0855ebd79064907716983a Mon Sep 17 00:00:00 2001
+From a8fbb750f09e21c885fac27eafc830c7bf0a6acf Mon Sep 17 00:00:00 2001
 From: Fxzx micah <48860358+fxzxmicah@users.noreply.github.com>
 Date: Wed, 2 Sep 2026 03:07:50 +0800
 Subject: [PATCH] build: align Android features with libbox tags
